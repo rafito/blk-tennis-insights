@@ -54,3 +54,6 @@ Crie rankings baseados no método Glicko-2:
 - Visualização clara e objetiva das informações, rankings e gráficos.
 - Aplicação deve estar pronta para ser facilmente publicada em ambiente AWS sem necessidade de grandes ajustes adicionais.
 
+
+## Extra Info
+- o arquivo na raiz database_structures.sql contém todas as tabelas do banco para você se basear e saber o nome dos campos
