@@ -25,36 +25,37 @@ st.set_page_config(
 # Conexão com o banco de dados
 @st.cache_data
 def load_data():
-    conn = sqlite3.connect('database.sqlite')
-    matches = pd.read_sql_query("SELECT * FROM matches", conn)
-    players = pd.read_sql_query("SELECT * FROM players", conn)
-    tournaments = pd.read_sql_query("SELECT * FROM tournaments", conn)
-    conn.close()
-    
-    # Debug: Imprimir colunas das tabelas
-    print("\nColunas em matches:", matches.columns.tolist())
-    print("\nColunas em tournaments:", tournaments.columns.tolist())
-    print("\nColunas em players:", players.columns.tolist())
-    
-    # Adiciona a data do torneio às partidas
-    if 'start_date' in tournaments.columns:
-        matches = matches.merge(
-            tournaments[['id', 'start_date']],
-            left_on='tournament_id',
-            right_on='id',
-            suffixes=('', '_tournament')
-        )
-        matches = matches.rename(columns={'start_date': 'tournament_date'})
-    elif 'created_at' in tournaments.columns:
-        matches = matches.merge(
-            tournaments[['id', 'created_at']],
-            left_on='tournament_id',
-            right_on='id',
-            suffixes=('', '_tournament')
-        )
-        matches = matches.rename(columns={'created_at': 'tournament_date'})
-    
-    return matches, players, tournaments
+    with st.spinner('Carregando dados do banco...'):
+        conn = sqlite3.connect('database.sqlite')
+        matches = pd.read_sql_query("SELECT * FROM matches", conn)
+        players = pd.read_sql_query("SELECT * FROM players", conn)
+        tournaments = pd.read_sql_query("SELECT * FROM tournaments", conn)
+        conn.close()
+        
+        # Debug: Imprimir colunas das tabelas
+        print("\nColunas em matches:", matches.columns.tolist())
+        print("\nColunas em tournaments:", tournaments.columns.tolist())
+        print("\nColunas em players:", players.columns.tolist())
+        
+        # Adiciona a data do torneio às partidas
+        if 'start_date' in tournaments.columns:
+            matches = matches.merge(
+                tournaments[['id', 'start_date']],
+                left_on='tournament_id',
+                right_on='id',
+                suffixes=('', '_tournament')
+            )
+            matches = matches.rename(columns={'start_date': 'tournament_date'})
+        elif 'created_at' in tournaments.columns:
+            matches = matches.merge(
+                tournaments[['id', 'created_at']],
+                left_on='tournament_id',
+                right_on='id',
+                suffixes=('', '_tournament')
+            )
+            matches = matches.rename(columns={'created_at': 'tournament_date'})
+        
+        return matches, players, tournaments
 
 # Carregar dados
 matches, players, tournaments = load_data()

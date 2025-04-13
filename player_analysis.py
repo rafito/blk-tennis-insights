@@ -216,15 +216,7 @@ def get_match_history(matches, players, player_id):
     # Preenche valores nulos
     result_df = result_df.fillna('N/A')
     
-    # Adiciona estilização condicional
-    def style_dataframe(df):
-        def row_style(row):
-            color = 'background-color: #FFB6C1' if row['Resultado'] == 'Derrota' else ''
-            return [color] * len(row)
-        
-        return df.style.apply(row_style, axis=1)
-    
-    return style_dataframe(result_df)
+    return result_df
 
 def display_player_page(matches, players):
     """Exibe a página de análise de jogadores"""
@@ -237,33 +229,35 @@ def display_player_page(matches, players):
     # Obter ID do jogador selecionado
     player_id = players[players['name'] == selected_player]['id'].iloc[0]
     
-    # Estatísticas do jogador
-    stats = get_player_stats(matches, player_id)
+    with st.spinner('Carregando estatísticas do jogador...'):
+        # Estatísticas do jogador
+        stats = get_player_stats(matches, player_id)
+        
+        # Métricas principais
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            st.metric("Total de Jogos", stats['total_matches'])
+        with col2:
+            st.metric("Vitórias", stats['wins'])
+        with col3:
+            st.metric("Derrotas", stats['losses'])
+        with col4:
+            st.metric("Taxa de Vitórias", f"{stats['win_rate']:.1f}%")
+        with col5:
+            st.metric("Títulos", stats['titles'])
     
-    # Métricas principais
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        st.metric("Total de Jogos", stats['total_matches'])
-    with col2:
-        st.metric("Vitórias", stats['wins'])
-    with col3:
-        st.metric("Derrotas", stats['losses'])
-    with col4:
-        st.metric("Taxa de Vitórias", f"{stats['win_rate']:.1f}%")
-    with col5:
-        st.metric("Títulos", stats['titles'])
-    
-    # Gráfico de distribuição de rodadas
-    st.subheader("Distribuição de Rodadas Alcançadas")
-    round_dist = get_round_distribution(matches, player_id)
-    
-    # Converte os números das rodadas para nomes descritivos no gráfico
-    round_dist.index = [get_round_name(r, None) for r in round_dist.index]
-    
-    fig = px.bar(x=round_dist.index, y=round_dist.values, 
-                 labels={'x': 'Fase', 'y': 'Quantidade'},
-                 title=f"Distribuição de Fases - {selected_player}")
-    st.plotly_chart(fig)
+    with st.spinner('Carregando distribuição de rodadas...'):
+        # Gráfico de distribuição de rodadas
+        st.subheader("Distribuição de Rodadas Alcançadas")
+        round_dist = get_round_distribution(matches, player_id)
+        
+        # Converte os números das rodadas para nomes descritivos no gráfico
+        round_dist.index = [get_round_name(r, None) for r in round_dist.index]
+        
+        fig = px.bar(x=round_dist.index, y=round_dist.values, 
+                     labels={'x': 'Fase', 'y': 'Quantidade'},
+                     title=f"Distribuição de Fases - {selected_player}")
+        st.plotly_chart(fig)
     
     # Histórico de Jogos
     st.subheader("Histórico de Jogos")
@@ -300,33 +294,43 @@ def display_player_page(matches, players):
             default=sorted(list(set(all_rounds)))
         )
     
-    # Filtra as partidas antes de passar para get_match_history
-    filtered_matches = matches[
-        matches['tournament_category'].isin(category_filter)
-    ].copy()
-    
-    # Obtém o histórico de jogos com os dados filtrados
-    match_history = get_match_history(filtered_matches, players, player_id)
-    
-    # Aplica os filtros restantes no DataFrame estilizado
-    filtered_df = match_history.data[
-        (match_history.data['Resultado'].isin(result_filter)) &
-        (match_history.data['Fase'].isin(round_filter))
-    ]
-    
-    # Reaplica a estilização no DataFrame filtrado
-    def row_style(row):
-        color = 'background-color: #FFB6C1' if row['Resultado'] == 'Derrota' else ''
-        return [color] * len(row)
-    
-    styled_df = filtered_df.style.apply(row_style, axis=1)
-    
-    # Exibe o histórico em uma tabela com estilo
-    st.dataframe(
-        styled_df,
-        hide_index=True,
-        use_container_width=True
-    )
+    with st.spinner('Carregando histórico de jogos...'):
+        # Filtra as partidas antes de passar para get_match_history
+        filtered_matches = matches[
+            matches['tournament_category'].isin(category_filter)
+        ].copy()
+        
+        # Obtém o histórico de jogos com os dados filtrados
+        match_history = get_match_history(filtered_matches, players, player_id)
+        
+        if not match_history.empty:
+            # Aplica os filtros no DataFrame antes de estilizar
+            filtered_df = match_history[
+                (match_history['Resultado'].isin(result_filter)) &
+                (match_history['Fase'].isin(round_filter))
+            ]
+            
+            if not filtered_df.empty:
+                # Aplica a estilização no DataFrame filtrado
+                def style_match_history(df):
+                    def row_style(row):
+                        color = 'background-color: #FFB6C1' if row['Resultado'] == 'Derrota' else ''
+                        return [color] * len(row)
+                    
+                    return df.style.apply(row_style, axis=1)
+                
+                styled_df = style_match_history(filtered_df)
+                
+                # Exibe o histórico em uma tabela com estilo
+                st.dataframe(
+                    styled_df,
+                    hide_index=True,
+                    use_container_width=True
+                )
+            else:
+                st.info("Nenhum jogo encontrado com os filtros selecionados.")
+        else:
+            st.info("Nenhum histórico de jogos encontrado para este jogador.")
     
     # Head-to-Head
     st.subheader("Head-to-Head")
@@ -334,30 +338,31 @@ def display_player_page(matches, players):
                            [p for p in player_names if p != selected_player])
     opponent_id = players[players['name'] == opponent]['id'].iloc[0]
     
-    h2h = get_head_to_head(matches, player_id, opponent_id)
-    
-    if h2h['total_matches'] > 0:
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric(f"Total de Jogos", h2h['total_matches'])
-        with col2:
-            st.metric(f"Vitórias de {selected_player}", h2h['player1_wins'])
-        with col3:
-            st.metric(f"Vitórias de {opponent}", h2h['player2_wins'])
+    with st.spinner('Carregando head-to-head...'):
+        h2h = get_head_to_head(matches, player_id, opponent_id)
         
-        # Gráfico de pizza do head-to-head
-        fig = px.pie(values=[h2h['player1_wins'], h2h['player2_wins']],
-                     names=[selected_player, opponent],
-                     title=f"Head-to-Head: {selected_player} vs {opponent}")
-        st.plotly_chart(fig)
-        
-        # Histórico de confrontos diretos
-        st.subheader(f"Histórico de Jogos: {selected_player} vs {opponent}")
-        h2h_matches = matches[
-            ((matches['winner_id'] == player_id) & (matches['loser_id'] == opponent_id)) |
-            ((matches['winner_id'] == opponent_id) & (matches['loser_id'] == player_id))
-        ]
-        h2h_history = get_match_history(h2h_matches, players, player_id)
-        st.dataframe(h2h_history, hide_index=True, use_container_width=True)
-    else:
-        st.info("Não há histórico de jogos entre estes jogadores.") 
+        if h2h['total_matches'] > 0:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(f"Total de Jogos", h2h['total_matches'])
+            with col2:
+                st.metric(f"Vitórias de {selected_player}", h2h['player1_wins'])
+            with col3:
+                st.metric(f"Vitórias de {opponent}", h2h['player2_wins'])
+            
+            # Gráfico de pizza do head-to-head
+            fig = px.pie(values=[h2h['player1_wins'], h2h['player2_wins']],
+                         names=[selected_player, opponent],
+                         title=f"Head-to-Head: {selected_player} vs {opponent}")
+            st.plotly_chart(fig)
+            
+            # Histórico de confrontos diretos
+            st.subheader(f"Histórico de Jogos: {selected_player} vs {opponent}")
+            h2h_matches = matches[
+                ((matches['winner_id'] == player_id) & (matches['loser_id'] == opponent_id)) |
+                ((matches['winner_id'] == opponent_id) & (matches['loser_id'] == player_id))
+            ]
+            h2h_history = get_match_history(h2h_matches, players, player_id)
+            st.dataframe(h2h_history, hide_index=True, use_container_width=True)
+        else:
+            st.info("Não há histórico de jogos entre estes jogadores.") 

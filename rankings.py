@@ -24,6 +24,12 @@ def calculate_glicko_ratings(matches, players, tournaments, category=None, time_
             pd.to_datetime(filtered_matches['started_month_year'], format='%m/%Y') >= time_period
         ]
     
+    # Obter lista de jogadores ativos no período
+    active_players = pd.concat([
+        filtered_matches['winner_id'],
+        filtered_matches['loser_id']
+    ]).unique()
+    
     # Inicializar sistema Glicko-2
     glicko_system = GlickoSystem()
     
@@ -34,7 +40,7 @@ def calculate_glicko_ratings(matches, players, tournaments, category=None, time_
         if pd.notna(match['winner_id']) and pd.notna(match['loser_id']):
             glicko_system.update_match(match['winner_id'], match['loser_id'])
     
-    # Converter ratings para DataFrame
+    # Converter ratings para DataFrame apenas para jogadores ativos
     ratings_df = pd.DataFrame([
         {
             'player_id': player_id,
@@ -42,7 +48,7 @@ def calculate_glicko_ratings(matches, players, tournaments, category=None, time_
             'rd': rd,
             'vol': vol
         }
-        for player_id in players['id']
+        for player_id in active_players
         for rating, rd, vol in [glicko_system.get_rating(player_id)]
     ])
     
@@ -189,94 +195,118 @@ def display_rankings_page(matches, players, tournaments):
     with tab1:
         st.subheader("Ranking Glicko-2")
         
-        if glicko_ratings.empty:
+        # Substituir card de info por expander
+        with st.expander("ℹ️ Como funciona o Ranking Glicko-2?"):
+            st.write("""
+            O ranking Glicko-2 é um sistema sofisticado que considera:
+            - Resultado das partidas (vitória/derrota)
+            - Força dos adversários enfrentados
+            - Frequência de jogos (quanto mais jogos, mais preciso o rating)
+            - Desvio padrão (quanto menor, mais confiável é o rating)
+            
+            O rating base é 1500, com desvio padrão inicial de 350.
+            Quanto maior o rating, melhor a performance do jogador.
+            """)
+        
+        if not glicko_ratings.empty:
+            with st.spinner('Preparando ranking Glicko-2...'):
+                # Preparar DataFrame do Glicko
+                glicko_df = glicko_ratings[['name', 'rating', 'rd']].rename(columns={
+                    'name': 'Jogador',
+                    'rating': 'Rating',
+                    'rd': 'Desvio Padrão'
+                })
+                
+                # Estilizar tabela Glicko
+                def style_glicko_table(df):
+                    def color_rows(x):
+                        df_len = len(df)
+                        colors = ['background-color: #f0f8ff' if i % 2 == 0 else '' for i in range(df_len)]
+                        return colors
+                    
+                    def bold_top3(x):
+                        df_len = len(df)
+                        return ['font-weight: bold' if i < 3 else '' for i in range(len(df.columns))]
+                    
+                    return df.style.format({
+                        'Rating': '{:.0f}',
+                        'Desvio Padrão': '{:.0f}'
+                    }).apply(color_rows, axis=0).apply(bold_top3, axis=1).set_properties(**{
+                        'text-align': 'center',
+                        'font-size': '14px',
+                        'padding': '5px 15px'
+                    }).set_properties(subset=['Jogador'], **{
+                        'text-align': 'left'
+                    }).hide(axis="index")
+                
+                st.dataframe(
+                    style_glicko_table(glicko_df),
+                    use_container_width=True,
+                    hide_index=True
+                )
+        else:
             st.info("Não há dados suficientes para gerar o ranking Glicko-2 neste período.")
-            return
-            
-        with st.spinner('Preparando ranking Glicko-2...'):
-            # Preparar DataFrame do Glicko
-            glicko_df = glicko_ratings[['name', 'rating', 'rd']].rename(columns={
-                'name': 'Jogador',
-                'rating': 'Rating',
-                'rd': 'Desvio Padrão'
-            })
-            
-            # Estilizar tabela Glicko
-            def style_glicko_table(df):
-                def color_rows(x):
-                    df_len = len(df)
-                    colors = ['background-color: #f0f8ff' if i % 2 == 0 else '' for i in range(df_len)]
-                    return colors
-                
-                def bold_top3(x):
-                    df_len = len(df)
-                    return ['font-weight: bold' if i < 3 else '' for i in range(len(df.columns))]
-                
-                return df.style.format({
-                    'Rating': '{:.0f}',
-                    'Desvio Padrão': '{:.0f}'
-                }).apply(color_rows, axis=0).apply(bold_top3, axis=1).set_properties(**{
-                    'text-align': 'center',
-                    'font-size': '14px',
-                    'padding': '5px 15px'
-                }).set_properties(subset=['Jogador'], **{
-                    'text-align': 'left'
-                }).hide(axis="index")
-            
-            st.dataframe(
-                style_glicko_table(glicko_df),
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            # Gráfico de evolução do rating
-            st.subheader("Top 5 Jogadores - Rating Glicko-2")
-            top_5 = glicko_ratings.head(min(5, len(glicko_ratings)))
-            if not top_5.empty:
-                fig = px.bar(top_5, x='name', y='rating',
-                            labels={'name': 'Jogador', 'rating': 'Rating'},
-                            title="Top 5 Jogadores por Rating Glicko-2")
-                st.plotly_chart(fig)
     
     with tab2:
         st.subheader("Ranking por Pontos")
         
-        if points_ranking.empty:
-            st.info("Não há dados suficientes para gerar o ranking por pontos neste período.")
-            return
+        # Substituir card de info por expander
+        with st.expander("ℹ️ Como funciona o Ranking por Pontos?"):
+            st.write("""
+            O ranking por pontos é baseado na performance em torneios:
             
-        with st.spinner('Preparando ranking por pontos...'):
-            # Preparar DataFrame de pontos
-            points_df = points_ranking[['name', 'points', 'set_balance']].rename(columns={
-                'name': 'Jogador',
-                'points': 'Pontos',
-                'set_balance': 'Saldo de Sets'
-            })
+            Torneios Regulares:
+            - Campeão: 1000 pontos
+            - Vice-campeão: 650 pontos
+            - Semifinal: 400 pontos
+            - Primeira rodada: 200 pontos
             
-            # Estilizar tabela de pontos
-            def style_points_table(df):
-                def color_rows(x):
-                    df_len = len(df)
-                    colors = ['background-color: #f0f8ff' if i % 2 == 0 else '' for i in range(df_len)]
-                    return colors
+            Torneios Finals:
+            - Campeão: 1000 pontos
+            - Vice-campeão: 650 pontos
+            - Semifinal: 400 pontos
+            
+            Pontos de Participação:
+            - Todo jogador que participa de um torneio recebe 10 pontos se perder na primeira rodada.
+            
+            Critérios de desempate: Saldo de Sets
+            """)
+        
+        if not points_ranking.empty:
+            with st.spinner('Preparando ranking por pontos...'):
+                # Preparar DataFrame de pontos
+                points_df = points_ranking[['name', 'points', 'set_balance']].rename(columns={
+                    'name': 'Jogador',
+                    'points': 'Pontos',
+                    'set_balance': 'Saldo de Sets'
+                })
                 
-                def bold_top3(x):
-                    df_len = len(df)
-                    return ['font-weight: bold' if i < 3 else '' for i in range(len(df.columns))]
+                # Estilizar tabela de pontos
+                def style_points_table(df):
+                    def color_rows(x):
+                        df_len = len(df)
+                        colors = ['background-color: #f0f8ff' if i % 2 == 0 else '' for i in range(df_len)]
+                        return colors
+                    
+                    def bold_top3(x):
+                        df_len = len(df)
+                        return ['font-weight: bold' if i < 3 else '' for i in range(len(df.columns))]
+                    
+                    return df.style.format({
+                        'Pontos': '{:,.0f}',
+                        'Saldo de Sets': '{:+.0f}'
+                    }).apply(color_rows, axis=0).apply(bold_top3, axis=1).set_properties(**{
+                        'text-align': 'center',
+                        'font-size': '14px',
+                        'padding': '5px 15px'
+                    }).set_properties(subset=['Jogador'], **{
+                        'text-align': 'left'
+                    }).hide(axis="index")
                 
-                return df.style.format({
-                    'Pontos': '{:,.0f}',
-                    'Saldo de Sets': '{:+.0f}'
-                }).apply(color_rows, axis=0).apply(bold_top3, axis=1).set_properties(**{
-                    'text-align': 'center',
-                    'font-size': '14px',
-                    'padding': '5px 15px'
-                }).set_properties(subset=['Jogador'], **{
-                    'text-align': 'left'
-                }).hide(axis="index")
-            
-            st.dataframe(
-                style_points_table(points_df),
-                use_container_width=True,
-                hide_index=True
-            ) 
+                st.dataframe(
+                    style_points_table(points_df),
+                    use_container_width=True,
+                    hide_index=True
+                )
+        else:
+            st.info("Não há dados suficientes para gerar o ranking por pontos neste período.") 
