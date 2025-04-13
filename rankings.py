@@ -102,7 +102,7 @@ def display_rankings_page(matches, players, tournaments):
     with col2:
         time_period = st.selectbox(
             "Período:",
-            ["Todo o histórico", "Últimos 12 meses", "Últimos 24 meses"]
+            ["Todo o histórico", "Somente este ano", "Últimos 12 meses", "Últimos 24 meses"]
         )
     
     # Só mostra os rankings se uma categoria for selecionada
@@ -115,6 +115,8 @@ def display_rankings_page(matches, players, tournaments):
         time_period = pd.Timestamp.now() - pd.DateOffset(months=12)
     elif time_period == "Últimos 24 meses":
         time_period = pd.Timestamp.now() - pd.DateOffset(months=24)
+    elif time_period == "Somente este ano":
+        time_period = pd.Timestamp(f"{pd.Timestamp.now().year}-01-01")
     else:
         time_period = None
     
