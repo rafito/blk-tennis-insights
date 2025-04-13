@@ -30,10 +30,30 @@ def is_final_round(round_number, tournament_name):
 
 def get_player_stats(matches, player_id):
     """Calcula estatísticas do jogador"""
+    # Garantir que matches é um DataFrame válido
+    if matches is None or matches.empty:
+        return {
+            'total_matches': 0,
+            'wins': 0,
+            'losses': 0,
+            'win_rate': 0,
+            'titles': 0
+        }
+
+    # Filtrar partidas do jogador com verificação de valores nulos
     player_matches = matches[
-        (matches['winner_id'] == player_id) | 
-        (matches['loser_id'] == player_id)
+        (matches['winner_id'].notna() & matches['loser_id'].notna()) &
+        ((matches['winner_id'] == player_id) | (matches['loser_id'] == player_id))
     ]
+    
+    if player_matches.empty:
+        return {
+            'total_matches': 0,
+            'wins': 0,
+            'losses': 0,
+            'win_rate': 0,
+            'titles': 0
+        }
     
     total_matches = len(player_matches)
     wins = len(player_matches[player_matches['winner_id'] == player_id])
@@ -61,7 +81,20 @@ def get_round_distribution(matches, player_id):
         (matches['loser_id'] == player_id)
     ]
     
-    round_counts = player_matches['round'].value_counts().sort_index()
+    # Agrupa por torneio e rodada para evitar duplicatas
+    tournament_rounds = player_matches.groupby(['tournament_name', 'round']).first().reset_index()
+    
+    # Mapeia as rodadas para nomes descritivos considerando o tipo de torneio
+    round_counts = {}
+    for _, row in tournament_rounds.iterrows():
+        round_name = get_round_name(row['round'], row['tournament_name'])
+        round_counts[round_name] = round_counts.get(round_name, 0) + 1
+    
+    # Converte para Series e ordena pela ordem natural das rodadas
+    round_order = ['Primeira Rodada', 'Quartas de Final', 'Semifinal', 'Final']
+    round_counts = pd.Series(round_counts)
+    round_counts = round_counts.reindex(round_order).fillna(0)
+    
     return round_counts
 
 def get_head_to_head(matches, player1_id, player2_id):
@@ -82,22 +115,29 @@ def get_head_to_head(matches, player1_id, player2_id):
 
 def get_match_history(matches, players, player_id):
     """Obtém o histórico de jogos de um jogador com informações detalhadas"""
-    # Filtra partidas do jogador
+    # Verificar se temos dados válidos
+    if matches is None or matches.empty or players is None or players.empty:
+        return pd.DataFrame()
+
+    # Filtra partidas do jogador com verificação de valores nulos
     player_matches = matches[
-        (matches['match_id'].notna()) &  # Garante que a linha é válida
-        ((matches['winner_id'] == player_id) | 
-        (matches['loser_id'] == player_id))
+        (matches['match_id'].notna()) &
+        (matches['winner_id'].notna() & matches['loser_id'].notna()) &
+        ((matches['winner_id'] == player_id) | (matches['loser_id'] == player_id))
     ].copy()
     
-    # Adiciona nome do oponente
+    if player_matches.empty:
+        return pd.DataFrame()
+    
+    # Adiciona nome do oponente com verificação de valores nulos
     player_matches['opponent_id'] = player_matches.apply(
         lambda x: x['loser_id'] if x['winner_id'] == player_id else x['winner_id'],
         axis=1
     )
     
-    player_matches['opponent_name'] = player_matches['opponent_id'].map(
-        players.set_index('id')['name']
-    )
+    # Criar um dicionário de nomes de jogadores para evitar problemas de índice
+    player_names = players.set_index('id')['name'].to_dict()
+    player_matches['opponent_name'] = player_matches['opponent_id'].map(player_names)
     
     # Adiciona resultado e placar formatado
     player_matches['result'] = player_matches.apply(
@@ -108,11 +148,15 @@ def get_match_history(matches, players, player_id):
     # Formata o placar sempre com o número maior primeiro
     def format_score(row):
         try:
+            if pd.isna(row['score']):
+                return "N/A"
             score_str = str(row['score']).strip('"')
+            if not score_str or score_str == 'nan':
+                return "N/A"
             sets = [int(s) for s in score_str.split('-')]
             return f"{max(sets)}x{min(sets)}"
         except (ValueError, AttributeError):
-            return "N/A"  # Retorna N/A se houver algum erro na conversão
+            return "N/A"
     
     # Aplica a formatação do placar
     player_matches['score_formatted'] = player_matches.apply(format_score, axis=1)
@@ -120,29 +164,37 @@ def get_match_history(matches, players, player_id):
     # Calcula o número real de sets jogados baseado no placar
     def calculate_sets_played(score):
         try:
+            if pd.isna(score):
+                return 0
             score_str = str(score).strip('"')
+            if not score_str or score_str == 'nan':
+                return 0
             sets = [int(s) for s in score_str.split('-')]
-            return sum(sets)  # A soma dos sets é o total de sets jogados
+            return sum(sets)
         except (ValueError, AttributeError):
-            return 0  # Retorna 0 se houver algum erro na conversão
+            return 0
     
     player_matches['sets_played'] = player_matches['score'].apply(calculate_sets_played)
     
-    # Mapeia as rodadas para nomes mais descritivos
+    # Mapeia as rodadas para nomes mais descritivos com verificação de valores nulos
     player_matches['round_name'] = player_matches.apply(
-        lambda x: get_round_name(x['round'], x['tournament_name']),
+        lambda x: get_round_name(x['round'], x['tournament_name']) if pd.notna(x['round']) else 'N/A',
         axis=1
     )
     
     # Adiciona informações do torneio
     player_matches['tournament_info'] = player_matches.apply(
-        lambda x: f"{x['tournament_name']} ({x['tournament_category']})",
+        lambda x: f"{x['tournament_name'] or 'N/A'} ({x['tournament_category'] or 'N/A'})",
         axis=1
     )
     
     # Ordena por data do torneio se disponível
     if 'started_month_year' in player_matches.columns:
-        player_matches['tournament_date'] = pd.to_datetime(player_matches['started_month_year'])
+        player_matches['tournament_date'] = pd.to_datetime(
+            player_matches['started_month_year'],
+            format='%m/%Y',
+            errors='coerce'
+        )
         player_matches = player_matches.sort_values('tournament_date', ascending=False)
         player_matches['tournament_date'] = player_matches['tournament_date'].dt.strftime('%d/%m/%Y')
     
@@ -160,6 +212,9 @@ def get_match_history(matches, players, player_id):
     # Retorna apenas as colunas que existem no DataFrame
     available_columns = [col for col in display_columns.keys() if col in player_matches.columns]
     result_df = player_matches[available_columns].rename(columns=display_columns)
+    
+    # Preenche valores nulos
+    result_df = result_df.fillna('N/A')
     
     # Adiciona estilização condicional
     def style_dataframe(df):

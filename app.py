@@ -5,7 +5,6 @@ import plotly.express as px
 import numpy as np
 from player_analysis import display_player_page
 from rankings import display_rankings_page
-from insights import display_insights_page
 import tracemalloc
 import warnings
 import asyncio
@@ -68,32 +67,13 @@ st.title("🎾 BLK Tennis Insights")
 
 # Sidebar para navegação
 st.sidebar.title("Navegação")
-page = st.sidebar.radio(
-    "Selecione uma página:",
-    ["Visão Geral", "Jogadores", "Rankings", "Insights"]
+page = st.sidebar.selectbox(
+    "Selecione a página:",
+    ["Análise de Jogadores", "Rankings"]
 )
 
-if page == "Visão Geral":
-    st.header("Visão Geral do Sistema")
-    
-    # Estatísticas Gerais
-    st.subheader("Estatísticas Gerais")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Total de Jogadores", len(players))
-    
-    with col2:
-        st.metric("Total de Torneios", len(tournaments))
-    
-    with col3:
-        st.metric("Total de Jogos", len(matches))
-
-elif page == "Jogadores":
+# Exibir página selecionada
+if page == "Análise de Jogadores":
     display_player_page(matches, players)
-
 elif page == "Rankings":
-    display_rankings_page(matches, players, tournaments)
-
-elif page == "Insights":
-    display_insights_page(matches, players, tournaments) 
+    display_rankings_page(matches, players, tournaments) 
