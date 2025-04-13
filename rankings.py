@@ -157,7 +157,8 @@ def display_rankings_page(matches, players, tournaments):
     with col2:
         time_period = st.selectbox(
             "Período:",
-            ["Todo o histórico", "Somente este ano", "Últimos 12 meses", "Últimos 24 meses"]
+            ["Todo o histórico", "Somente este ano", "Últimos 12 meses", "Últimos 24 meses"],
+            index=2  # Define "Últimos 12 meses" como padrão (índice 2 na lista)
         )
     
     # Só mostra os rankings se uma categoria for selecionada
