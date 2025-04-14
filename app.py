@@ -36,40 +36,18 @@ def get_query_params():
         'host': host
     }
 
-# Conexão com o banco de dados
 @st.cache_data
 def load_data():
-    with st.spinner('Carregando dados do banco...'):
-        conn = sqlite3.connect('database.sqlite')
-        matches = pd.read_sql_query("SELECT * FROM matches", conn)
-        players = pd.read_sql_query("SELECT * FROM players", conn)
-        tournaments = pd.read_sql_query("SELECT * FROM tournaments", conn)
-        conn.close()
-        
-        # Debug: Imprimir colunas das tabelas
-        print("\nColunas em matches:", matches.columns.tolist())
-        print("\nColunas em tournaments:", tournaments.columns.tolist())
-        print("\nColunas em players:", players.columns.tolist())
-        
-        # Adiciona a data do torneio às partidas
-        if 'start_date' in tournaments.columns:
-            matches = matches.merge(
-                tournaments[['id', 'start_date']],
-                left_on='tournament_id',
-                right_on='id',
-                suffixes=('', '_tournament')
-            )
-            matches = matches.rename(columns={'start_date': 'tournament_date'})
-        elif 'created_at' in tournaments.columns:
-            matches = matches.merge(
-                tournaments[['id', 'created_at']],
-                left_on='tournament_id',
-                right_on='id',
-                suffixes=('', '_tournament')
-            )
-            matches = matches.rename(columns={'created_at': 'tournament_date'})
-        
-        return matches, players, tournaments
+    """Carrega os dados do banco SQLite"""
+    conn = sqlite3.connect('database.sqlite')
+    
+    matches = pd.read_sql_query("SELECT * FROM matches", conn)
+    players = pd.read_sql_query("SELECT * FROM players", conn)
+    tournaments = pd.read_sql_query("SELECT * FROM tournaments", conn)
+    
+    conn.close()
+    
+    return matches, players, tournaments
 
 # Carregar dados
 matches, players, tournaments = load_data()
@@ -83,23 +61,23 @@ st.title("🎾 BLK Tennis Insights")
 # Obter query parameters
 params = get_query_params()
 
-# Sidebar para navegação
-st.sidebar.title("Navegação")
-page = st.sidebar.selectbox(
-    "Selecione a página:",
-    ["Análise de Jogadores", "Rankings"],
-    index=0 if params['page'] == 'Análise de Jogadores' else 1
+# Navegação no topo com ícones
+page = st.selectbox(
+    "📍 Navegação:",
+    ["👤 Análise de Jogadores", "🏆 Rankings"],
+    index=0 if params['page'] == 'Análise de Jogadores' else 1,
+    format_func=lambda x: x.split(" ", 1)[1]  # Remove o emoji do display
 )
 
 # Atualizar query parameters quando a página mudar
-st.query_params['page'] = page
+st.query_params['page'] = page.split(" ", 1)[1]  # Remove o emoji
 if params['player_id']:
     st.query_params['player_id'] = params['player_id']
 
 # Exibir página selecionada
-if page == "Análise de Jogadores":
+if "Análise de Jogadores" in page:
     # Armazenar o host na session_state
     st.session_state['host'] = params['host']
     display_player_page(matches, players, shared_player_id=params['player_id'])
-elif page == "Rankings":
+elif "Rankings" in page:
     display_rankings_page(matches, players, tournaments) 
