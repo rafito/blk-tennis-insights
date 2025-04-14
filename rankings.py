@@ -150,9 +150,16 @@ def display_rankings_page(matches, players, tournaments):
     # Seleção de categoria e período
     col1, col2 = st.columns(2)
     with col1:
+        categories = ["Selecione..."] + sorted(tournaments['category'].unique().tolist())
+        try:
+            default_index = categories.index("3a Classe")
+        except ValueError:
+            default_index = 1 if len(categories) > 1 else 0
+        
         category = st.selectbox(
             "Selecione a categoria:",
-            ["Selecione..."] + sorted(tournaments['category'].unique().tolist())
+            categories,
+            index=default_index
         )
     with col2:
         time_period = st.selectbox(
@@ -218,11 +225,21 @@ def display_rankings_page(matches, players, tournaments):
                     'rd': 'Desvio Padrão'
                 })
                 
+                # Adicionar coluna de posição
+                glicko_df.insert(0, 'Pos.', range(1, len(glicko_df) + 1))
+                
                 # Estilizar tabela Glicko
                 def style_glicko_table(df):
                     def color_rows(x):
                         df_len = len(df)
-                        colors = ['background-color: #f0f8ff' if i % 2 == 0 else '' for i in range(df_len)]
+                        colors = []
+                        for i in range(df_len):
+                            if i < 10:  # Top 10
+                                colors.append('background-color: #e6f3ff')
+                            elif i % 2 == 0:
+                                colors.append('background-color: #f8f9fa')
+                            else:
+                                colors.append('')
                         return colors
                     
                     def bold_top3(x):
@@ -230,6 +247,7 @@ def display_rankings_page(matches, players, tournaments):
                         return ['font-weight: bold' if i < 3 else '' for i in range(len(df.columns))]
                     
                     return df.style.format({
+                        'Pos.': '{:.0f}',
                         'Rating': '{:.0f}',
                         'Desvio Padrão': '{:.0f}'
                     }).apply(color_rows, axis=0).apply(bold_top3, axis=1).set_properties(**{
@@ -282,11 +300,21 @@ def display_rankings_page(matches, players, tournaments):
                     'set_balance': 'Saldo de Sets'
                 })
                 
+                # Adicionar coluna de posição
+                points_df.insert(0, 'Pos.', range(1, len(points_df) + 1))
+                
                 # Estilizar tabela de pontos
                 def style_points_table(df):
                     def color_rows(x):
                         df_len = len(df)
-                        colors = ['background-color: #f0f8ff' if i % 2 == 0 else '' for i in range(df_len)]
+                        colors = []
+                        for i in range(df_len):
+                            if i < 10:  # Top 10
+                                colors.append('background-color: #e6f3ff')
+                            elif i % 2 == 0:
+                                colors.append('background-color: #f8f9fa')
+                            else:
+                                colors.append('')
                         return colors
                     
                     def bold_top3(x):
@@ -294,6 +322,7 @@ def display_rankings_page(matches, players, tournaments):
                         return ['font-weight: bold' if i < 3 else '' for i in range(len(df.columns))]
                     
                     return df.style.format({
+                        'Pos.': '{:.0f}',
                         'Pontos': '{:,.0f}',
                         'Saldo de Sets': '{:+.0f}'
                     }).apply(color_rows, axis=0).apply(bold_top3, axis=1).set_properties(**{
