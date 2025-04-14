@@ -7,7 +7,7 @@ def is_finals_tournament(tournament_name):
     return 'FINALS' in str(tournament_name).upper()
 
 def get_round_name(round_number, tournament_name):
-    """Retorna o nome da rodada baseado no número e tipo do torneio"""
+    """Retorna o nome da fase baseado no número e tipo do torneio"""
     if is_finals_tournament(tournament_name):
         round_names = {
             1: 'Quartas de Final',
@@ -16,12 +16,12 @@ def get_round_name(round_number, tournament_name):
         }
     else:
         round_names = {
-            1: 'Primeira Rodada',
+            1: 'Primeira',
             2: 'Quartas de Final',
             3: 'Semifinal',
             4: 'Final'
         }
-    return round_names.get(round_number, f'Rodada {round_number}')
+    return round_names.get(round_number, f'Fase {round_number}')
 
 def is_final_round(round_number, tournament_name):
     """Verifica se é a rodada final do torneio"""
@@ -91,7 +91,7 @@ def get_round_distribution(matches, player_id):
         round_counts[round_name] = round_counts.get(round_name, 0) + 1
     
     # Converte para Series e ordena pela ordem natural das rodadas
-    round_order = ['Primeira Rodada', 'Quartas de Final', 'Semifinal', 'Final']
+    round_order = ['Primeira', 'Quartas de Final', 'Semifinal', 'Final']
     round_counts = pd.Series(round_counts)
     round_counts = round_counts.reindex(round_order).fillna(0)
     
@@ -237,6 +237,29 @@ def get_player_insights(matches, player_id, stats):
         axis=1
     )
     
+    # Insight sobre maior rivalidade
+    # Encontra o adversário contra quem mais jogou
+    rivals = pd.concat([
+        player_matches[player_matches['winner_id'] == player_id]['loser_id'],
+        player_matches[player_matches['loser_id'] == player_id]['winner_id']
+    ]).value_counts()
+    
+    if not rivals.empty and rivals.iloc[0] >= 2:  # Só mostra se tiver pelo menos 2 jogos
+        rival_id = rivals.index[0]
+        rival_matches = player_matches[
+            ((player_matches['winner_id'] == player_id) & (player_matches['loser_id'] == rival_id)) |
+            ((player_matches['winner_id'] == rival_id) & (player_matches['loser_id'] == player_id))
+        ]
+        wins = len(rival_matches[rival_matches['winner_id'] == player_id])
+        total = len(rival_matches)
+        rival_name = matches[matches['winner_id'] == rival_id]['winner_name'].iloc[0]
+        
+        insights.append({
+            'icon': '⚔️',
+            'title': 'Maior Rivalidade',
+            'text': f"{rival_name}: {total} jogos, {wins} vitória{'s' if wins != 1 else ''} ({(wins/total*100):.1f}% de aproveitamento)"
+        })
+    
     # Insight sobre títulos e finais
     finals_played = len(player_matches[
         player_matches.apply(lambda x: is_final_round(x['round'], x['tournament_name']), axis=1)
@@ -246,7 +269,7 @@ def get_player_insights(matches, player_id, stats):
         insights.append({
             'icon': '🏆',
             'title': 'Desempenho em Finais',
-            'text': f"Disputou {finals_played} final{'is' if finals_played > 1 else ''}, " +
+            'text': f"Disputou {finals_played} {'finais' if finals_played > 1 else 'final'}, " +
                    f"vencendo {stats['titles']} ({win_rate_finals:.1f}% de aproveitamento em finais)"
         })
     
@@ -296,13 +319,26 @@ def get_player_insights(matches, player_id, stats):
     
     # Insight sobre fases mais alcançadas
     if not player_matches['round_name'].empty:
-        most_reached_round = player_matches['round_name'].mode().iloc[0]
-        round_count = len(player_matches[player_matches['round_name'] == most_reached_round])
-        if round_count > 2:
+        # Ordem das fases do melhor para o pior resultado
+        round_order = ['Final', 'Semifinal', 'Quartas de Final', 'Primeira']
+        
+        # Conta quantas vezes alcançou cada fase
+        round_counts = player_matches['round_name'].value_counts()
+        
+        # Encontra a melhor fase alcançada que tenha pelo menos uma ocorrência
+        best_rounds = []
+        for round_name in round_order:
+            if round_name in round_counts.index and round_counts[round_name] > 0:
+                count = round_counts[round_name]
+                best_rounds.append(f"{count}x {round_name}")
+                if len(best_rounds) >= 2:  # Pega no máximo as 2 melhores fases
+                    break
+        
+        if best_rounds:
             insights.append({
                 'icon': '🎯',
-                'title': 'Fase mais Frequente',
-                'text': f"Alcançou a fase de {most_reached_round} em {round_count} torneios"
+                'title': 'Melhores Resultados',
+                'text': f"Alcançou {' e '.join(best_rounds)}"
             })
     
     return insights
@@ -397,10 +433,59 @@ def display_player_page(matches, players, shared_player_id=None):
         # Converte os números das rodadas para nomes descritivos no gráfico
         round_dist.index = [get_round_name(r, None) for r in round_dist.index]
         
-        fig = px.bar(x=round_dist.index, y=round_dist.values, 
-                     labels={'x': 'Fase', 'y': 'Quantidade'},
-                     title=f"Distribuição de Fases - {selected_player}")
-        st.plotly_chart(fig)
+        # Cria o gráfico com mais customizações
+        fig = px.bar(
+            y=round_dist.index, 
+            x=round_dist.values,
+            orientation='h',
+            labels={'y': 'Fase', 'x': 'Quantidade'},
+            title=f"Distribuição de Fases - {selected_player}"
+        )
+        
+        # Customiza o layout do gráfico
+        fig.update_layout(
+            title={
+                'font_size': 20,
+                'xanchor': 'center',
+                'x': 0.5
+            },
+            plot_bgcolor='white',
+            showlegend=False,
+            yaxis=dict(
+                title_font=dict(size=14),
+                tickfont=dict(size=12),
+                showgrid=False,
+                autorange='reversed'  # Inverte a ordem para manter a sequência lógica
+            ),
+            xaxis=dict(
+                title_font=dict(size=14),
+                tickfont=dict(size=12),
+                showgrid=True,
+                gridwidth=1,
+                gridcolor='rgba(128, 128, 128, 0.2)',
+                zeroline=True,
+                zerolinewidth=1,
+                zerolinecolor='rgba(128, 128, 128, 0.2)'
+            ),
+            bargap=0.3
+        )
+        
+        # Adiciona os valores nas barras
+        fig.update_traces(
+            text=round_dist.values,
+            textposition='outside',
+            textfont=dict(size=14),
+            marker_color='#1f77b4',  # Cor azul mais profissional
+            hovertemplate="<b>%{y}</b><br>" +
+                         "Quantidade: %{x}<br>" +
+                         "<extra></extra>"  # Remove texto adicional no hover
+        )
+        
+        # Ajusta os limites do eixo X para acomodar os números
+        max_value = round_dist.max()
+        fig.update_layout(xaxis_range=[0, max_value * 1.2])
+        
+        st.plotly_chart(fig, use_container_width=True)
     
     # Adiciona botão de compartilhar
     share_url = f"{st.session_state.get('host', 'https://blk-tennis-insights.streamlit.app')}?player_id={player_id}&page=Análise de Jogadores"
@@ -436,7 +521,7 @@ def display_player_page(matches, players, shared_player_id=None):
             if is_finals_tournament(tournament_name):
                 all_rounds.extend(['Quartas de Final', 'Semifinal', 'Final'])
             else:
-                all_rounds.extend(['Primeira Rodada', 'Quartas de Final', 'Semifinal', 'Final'])
+                all_rounds.extend(['Primeira', 'Quartas de Final', 'Semifinal', 'Final'])
         round_filter = st.multiselect(
             "Filtrar por fase:",
             options=sorted(list(set(all_rounds))),
