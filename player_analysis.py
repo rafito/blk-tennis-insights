@@ -372,6 +372,16 @@ def get_player_insights(matches, player_id, stats):
     
     return insights
 
+def get_player_opponents(matches, player_id):
+    """Retorna lista de IDs dos jogadores que já enfrentaram o jogador selecionado"""
+    # Encontra todos os oponentes nas partidas onde o jogador foi vencedor ou perdedor
+    opponents = pd.concat([
+        matches[matches['winner_id'] == player_id]['loser_id'],
+        matches[matches['loser_id'] == player_id]['winner_id']
+    ]).unique()
+    
+    return opponents
+
 def display_player_page(matches, players, shared_player_id=None):
     """Exibe a página de análise de jogadores"""
     st.header("👤 Análise de Jogadores")
@@ -456,16 +466,11 @@ def display_player_page(matches, players, shared_player_id=None):
             x=round_dist.values,
             orientation='h',
             labels={'y': 'Fase', 'x': 'Quantidade'},
-            title=f"Distribuição de Fases - {selected_player}"
+            title=None
         )
         
         # Customiza o layout do gráfico
         fig.update_layout(
-            title={
-                'font_size': 20,
-                'xanchor': 'center',
-                'x': 0.5
-            },
             plot_bgcolor='white',
             showlegend=False,
             yaxis=dict(
@@ -561,8 +566,16 @@ def display_player_page(matches, players, shared_player_id=None):
             ]
             
             if not filtered_df.empty:
+                # Função para estilizar as linhas baseado no resultado
+                def highlight_results(row):
+                    if row['Resultado'] == 'Vitória':
+                        return ['background-color: #e6ffe6' for _ in row]
+                    else:  # Derrota
+                        return ['background-color: #ffe6e6' for _ in row]
+                
+                # Aplica a estilização e mostra o DataFrame
                 st.dataframe(
-                    filtered_df,
+                    filtered_df.style.apply(highlight_results, axis=1),
                     hide_index=True,
                     use_container_width=True
                 )
@@ -574,11 +587,18 @@ def display_player_page(matches, players, shared_player_id=None):
     # Head-to-Head
     st.subheader("🤼 Head-to-Head")
     
-    # Seleção do oponente
-    opponent = st.selectbox(
-        "🔄 Selecione um jogador para comparar:",
-        [""] + [name for name in sorted(players['name'].tolist()) if name != selected_player]
-    )
+    # Obtém lista de oponentes que já jogaram contra o jogador selecionado
+    opponent_ids = get_player_opponents(matches, player_id)
+    opponent_names = players[players['id'].isin(opponent_ids)]['name'].tolist()
+    
+    if not opponent_names:
+        st.info("Este jogador ainda não tem confrontos registrados.")
+    else:
+        # Seleção do oponente apenas entre aqueles que já jogaram contra o jogador selecionado
+        opponent = st.selectbox(
+            "🔄 Selecione um jogador para comparar:",
+            [""] + sorted(opponent_names)
+        )
     
     if opponent:
         opponent_df = players[players['name'] == opponent]
