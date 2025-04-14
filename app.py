@@ -22,6 +22,20 @@ st.set_page_config(
     layout="wide"
 )
 
+# Função para obter query parameters e host
+def get_query_params():
+    """Obtém os query parameters da URL e o host"""
+    query_params = st.query_params
+    
+    # Em produção, usa o domínio correto
+    host = 'https://blk-tennis-insights.streamlit.app'
+    
+    return {
+        'player_id': query_params.get('player_id', None),
+        'page': query_params.get('page', 'Análise de Jogadores'),
+        'host': host
+    }
+
 # Conexão com o banco de dados
 @st.cache_data
 def load_data():
@@ -66,15 +80,26 @@ print("Colunas disponíveis em matches:", matches.columns.tolist())
 # Título principal
 st.title("🎾 BLK Tennis Insights")
 
+# Obter query parameters
+params = get_query_params()
+
 # Sidebar para navegação
 st.sidebar.title("Navegação")
 page = st.sidebar.selectbox(
     "Selecione a página:",
-    ["Análise de Jogadores", "Rankings"]
+    ["Análise de Jogadores", "Rankings"],
+    index=0 if params['page'] == 'Análise de Jogadores' else 1
 )
+
+# Atualizar query parameters quando a página mudar
+st.query_params['page'] = page
+if params['player_id']:
+    st.query_params['player_id'] = params['player_id']
 
 # Exibir página selecionada
 if page == "Análise de Jogadores":
-    display_player_page(matches, players)
+    # Armazenar o host na session_state
+    st.session_state['host'] = params['host']
+    display_player_page(matches, players, shared_player_id=params['player_id'])
 elif page == "Rankings":
     display_rankings_page(matches, players, tournaments) 

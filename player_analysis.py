@@ -218,16 +218,130 @@ def get_match_history(matches, players, player_id):
     
     return result_df
 
-def display_player_page(matches, players):
+def get_player_insights(matches, player_id, stats):
+    """Gera insights sobre o desempenho do jogador"""
+    insights = []
+    
+    # Filtrar partidas do jogador
+    player_matches = matches[
+        (matches['winner_id'] == player_id) | 
+        (matches['loser_id'] == player_id)
+    ].copy()  # Adicionado .copy() para evitar SettingWithCopyWarning
+    
+    if player_matches.empty:
+        return insights
+    
+    # Adiciona nome da rodada
+    player_matches['round_name'] = player_matches.apply(
+        lambda x: get_round_name(x['round'], x['tournament_name']),
+        axis=1
+    )
+    
+    # Insight sobre títulos e finais
+    finals_played = len(player_matches[
+        player_matches.apply(lambda x: is_final_round(x['round'], x['tournament_name']), axis=1)
+    ])
+    if finals_played > 0:
+        win_rate_finals = (stats['titles'] / finals_played) * 100
+        insights.append({
+            'icon': '🏆',
+            'title': 'Desempenho em Finais',
+            'text': f"Disputou {finals_played} final{'is' if finals_played > 1 else ''}, " +
+                   f"vencendo {stats['titles']} ({win_rate_finals:.1f}% de aproveitamento em finais)"
+        })
+    
+    # Insight sobre sequência atual
+    current_streak = 0
+    max_streak = 0
+    current_type = None
+    
+    for _, match in player_matches.sort_values('started_month_year', ascending=True).iterrows():
+        is_victory = match['winner_id'] == player_id
+        
+        if current_type is None:
+            current_type = 'vitórias' if is_victory else 'derrotas'
+            current_streak = 1
+        elif (is_victory and current_type == 'vitórias') or (not is_victory and current_type == 'derrotas'):
+            current_streak += 1
+        else:
+            if current_type == 'vitórias' and current_streak > max_streak:
+                max_streak = current_streak
+            current_type = 'vitórias' if is_victory else 'derrotas'
+            current_streak = 1
+    
+    if current_streak > 2:
+        insights.append({
+            'icon': '🔥' if current_type == 'vitórias' else '📉',
+            'title': 'Sequência Atual',
+            'text': f"Está em sequência de {current_streak} {current_type} consecutivas"
+        })
+    
+    # Insight sobre aproveitamento por categoria
+    category_stats = {}
+    for category in player_matches['tournament_category'].unique():
+        category_matches = player_matches[player_matches['tournament_category'] == category]
+        wins = len(category_matches[category_matches['winner_id'] == player_id])
+        total = len(category_matches)
+        win_rate = (wins / total * 100) if total > 0 else 0
+        category_stats[category] = {'wins': wins, 'total': total, 'win_rate': win_rate}
+    
+    best_category = max(category_stats.items(), key=lambda x: x[1]['win_rate'])
+    if best_category[1]['total'] >= 3:  # Só mostra se tiver pelo menos 3 jogos
+        insights.append({
+            'icon': '📈',
+            'title': 'Melhor Categoria',
+            'text': f"Maior aproveitamento na categoria {best_category[0]}: " +
+                   f"{best_category[1]['win_rate']:.1f}% ({best_category[1]['wins']}/{best_category[1]['total']})"
+        })
+    
+    # Insight sobre fases mais alcançadas
+    if not player_matches['round_name'].empty:
+        most_reached_round = player_matches['round_name'].mode().iloc[0]
+        round_count = len(player_matches[player_matches['round_name'] == most_reached_round])
+        if round_count > 2:
+            insights.append({
+                'icon': '🎯',
+                'title': 'Fase mais Frequente',
+                'text': f"Alcançou a fase de {most_reached_round} em {round_count} torneios"
+            })
+    
+    return insights
+
+def display_player_page(matches, players, shared_player_id=None):
     """Exibe a página de análise de jogadores"""
     st.header("Análise de Jogadores")
     
-    # Seleção do jogador
-    player_names = players['name'].tolist()
-    selected_player = st.selectbox("Selecione um jogador:", player_names)
+    # Seleção do jogador com opção vazia inicial
+    player_names = [""] + sorted(players['name'].tolist())
     
+    # Se tiver um jogador compartilhado, seleciona ele pelo ID
+    default_index = 0
+    if shared_player_id and shared_player_id.isdigit():
+        player_id = int(shared_player_id)
+        player_df = players[players['id'] == player_id]
+        if not player_df.empty:
+            player_name = player_df['name'].iloc[0]
+            if player_name in player_names:
+                default_index = player_names.index(player_name)
+    
+    selected_player = st.selectbox(
+        "Selecione um jogador:", 
+        player_names,
+        index=default_index
+    )
+    
+    # Só mostra as análises se um jogador for selecionado
+    if not selected_player:
+        st.info("👆 Selecione um jogador acima para ver suas estatísticas")
+        return
+        
     # Obter ID do jogador selecionado
-    player_id = players[players['name'] == selected_player]['id'].iloc[0]
+    player_df = players[players['name'] == selected_player]
+    if player_df.empty:
+        st.error("Jogador não encontrado no banco de dados.")
+        return
+    
+    player_id = player_df['id'].iloc[0]
     
     with st.spinner('Carregando estatísticas do jogador...'):
         # Estatísticas do jogador
@@ -245,6 +359,35 @@ def display_player_page(matches, players):
             st.metric("Taxa de Vitórias", f"{stats['win_rate']:.1f}%")
         with col5:
             st.metric("Títulos", stats['titles'])
+        
+        # Seção de Insights
+        st.subheader("📊 Insights")
+        insights = get_player_insights(matches, player_id, stats)
+        
+        if insights:
+            cols = st.columns(2)  # Organiza os insights em duas colunas
+            for i, insight in enumerate(insights):
+                with cols[i % 2]:
+                    st.markdown(
+                        f"""
+                        <div style='
+                            background-color: #f0f2f6;
+                            padding: 15px;
+                            border-radius: 5px;
+                            margin-bottom: 10px;
+                        '>
+                            <div style='font-size: 1.1em; margin-bottom: 5px;'>
+                                {insight['icon']} <strong>{insight['title']}</strong>
+                            </div>
+                            <div style='color: #666;'>
+                                {insight['text']}
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+        else:
+            st.info("Ainda não há dados suficientes para gerar insights.")
     
     with st.spinner('Carregando distribuição de rodadas...'):
         # Gráfico de distribuição de rodadas
@@ -258,6 +401,12 @@ def display_player_page(matches, players):
                      labels={'x': 'Fase', 'y': 'Quantidade'},
                      title=f"Distribuição de Fases - {selected_player}")
         st.plotly_chart(fig)
+    
+    # Adiciona botão de compartilhar
+    share_url = f"{st.session_state.get('host', 'https://blk-tennis-insights.streamlit.app')}?player_id={player_id}&page=Análise de Jogadores"
+    
+    st.markdown("##### 📤 Link para compartilhar:")
+    st.code(share_url, language=None)
     
     # Histórico de Jogos
     st.subheader("Histórico de Jogos")
@@ -334,35 +483,51 @@ def display_player_page(matches, players):
     
     # Head-to-Head
     st.subheader("Head-to-Head")
-    opponent = st.selectbox("Selecione um oponente:", 
-                           [p for p in player_names if p != selected_player])
-    opponent_id = players[players['name'] == opponent]['id'].iloc[0]
     
-    with st.spinner('Carregando head-to-head...'):
-        h2h = get_head_to_head(matches, player_id, opponent_id)
+    # Encontrar todos os oponentes que já jogaram contra o jogador selecionado
+    opponents_ids = pd.concat([
+        matches[matches['winner_id'] == player_id]['loser_id'],
+        matches[matches['loser_id'] == player_id]['winner_id']
+    ]).unique()
+    
+    # Converter IDs para nomes e ordenar
+    opponents_names = [""] + sorted(players[players['id'].isin(opponents_ids)]['name'].tolist())
+    
+    opponent = st.selectbox("Selecione um oponente:", opponents_names)
+    
+    if opponent:
+        opponent_df = players[players['name'] == opponent]
+        if opponent_df.empty:
+            st.error("Oponente não encontrado no banco de dados.")
+            return
+            
+        opponent_id = opponent_df['id'].iloc[0]
         
-        if h2h['total_matches'] > 0:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric(f"Total de Jogos", h2h['total_matches'])
-            with col2:
-                st.metric(f"Vitórias de {selected_player}", h2h['player1_wins'])
-            with col3:
-                st.metric(f"Vitórias de {opponent}", h2h['player2_wins'])
+        with st.spinner('Carregando head-to-head...'):
+            h2h = get_head_to_head(matches, player_id, opponent_id)
             
-            # Gráfico de pizza do head-to-head
-            fig = px.pie(values=[h2h['player1_wins'], h2h['player2_wins']],
-                         names=[selected_player, opponent],
-                         title=f"Head-to-Head: {selected_player} vs {opponent}")
-            st.plotly_chart(fig)
-            
-            # Histórico de confrontos diretos
-            st.subheader(f"Histórico de Jogos: {selected_player} vs {opponent}")
-            h2h_matches = matches[
-                ((matches['winner_id'] == player_id) & (matches['loser_id'] == opponent_id)) |
-                ((matches['winner_id'] == opponent_id) & (matches['loser_id'] == player_id))
-            ]
-            h2h_history = get_match_history(h2h_matches, players, player_id)
-            st.dataframe(h2h_history, hide_index=True, use_container_width=True)
-        else:
-            st.info("Não há histórico de jogos entre estes jogadores.") 
+            if h2h['total_matches'] > 0:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(f"Total de Jogos", h2h['total_matches'])
+                with col2:
+                    st.metric(f"Vitórias de {selected_player}", h2h['player1_wins'])
+                with col3:
+                    st.metric(f"Vitórias de {opponent}", h2h['player2_wins'])
+                
+                # Gráfico de pizza do head-to-head
+                fig = px.pie(values=[h2h['player1_wins'], h2h['player2_wins']],
+                             names=[selected_player, opponent],
+                             title=f"Head-to-Head: {selected_player} vs {opponent}")
+                st.plotly_chart(fig)
+                
+                # Histórico de confrontos diretos
+                st.subheader(f"Histórico de Jogos: {selected_player} vs {opponent}")
+                h2h_matches = matches[
+                    ((matches['winner_id'] == player_id) & (matches['loser_id'] == opponent_id)) |
+                    ((matches['winner_id'] == opponent_id) & (matches['loser_id'] == player_id))
+                ]
+                h2h_history = get_match_history(h2h_matches, players, player_id)
+                st.dataframe(h2h_history, hide_index=True, use_container_width=True)
+            else:
+                st.info("Não há histórico de jogos entre estes jogadores.") 
