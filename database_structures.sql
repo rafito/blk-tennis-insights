@@ -110,6 +110,23 @@ CREATE VIEW "tournaments" AS SELECT id, name, category, started_at, STATE,
 	  FROM challonge_tournaments
 ;
 
+-- Tabela de administradores
+CREATE TABLE IF NOT EXISTS "admins" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "username" TEXT NOT NULL UNIQUE,
+    "password_hash" TEXT NOT NULL,
+    "created_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tabela de informações adicionais dos jogadores
+CREATE TABLE IF NOT EXISTS "player_profiles" (
+    "player_id" INTEGER PRIMARY KEY,
+    "display_name" TEXT,
+    "profile_image" TEXT,
+    "updated_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (player_id) REFERENCES players(id)
+);
+
 /*!40103 SET TIME_ZONE=IFNULL(@OLD_TIME_ZONE, 'system') */;
 /*!40101 SET SQL_MODE=IFNULL(@OLD_SQL_MODE, '') */;
 /*!40014 SET FOREIGN_KEY_CHECKS=IFNULL(@OLD_FOREIGN_KEY_CHECKS, 1) */;
