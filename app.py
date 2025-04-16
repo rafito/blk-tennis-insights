@@ -22,9 +22,23 @@ st.set_page_config(
     layout="wide"
 )
 
-# Conexão com o banco de dados
+# Função para obter query parameters e host
+def get_query_params():
+    """Obtém os query parameters da URL e o host"""
+    query_params = st.query_params
+    
+    # Em produção, usa o domínio correto
+    host = 'https://blk-tennis-insights.streamlit.app'
+    
+    return {
+        'player_id': query_params.get('player_id', None),
+        'page': query_params.get('page', 'Análise de Jogadores'),
+        'host': host
+    }
+
 @st.cache_data
 def load_data():
+<<<<<<< HEAD
     with st.spinner('Carregando dados do banco...'):
         conn = sqlite3.connect('challonge-scraper/database/database.sqlite')
         matches = pd.read_sql_query("SELECT * FROM matches", conn)
@@ -56,6 +70,18 @@ def load_data():
             matches = matches.rename(columns={'created_at': 'tournament_date'})
         
         return matches, players, tournaments
+=======
+    """Carrega os dados do banco SQLite"""
+    conn = sqlite3.connect('database.sqlite')
+    
+    matches = pd.read_sql_query("SELECT * FROM matches", conn)
+    players = pd.read_sql_query("SELECT * FROM players", conn)
+    tournaments = pd.read_sql_query("SELECT * FROM tournaments", conn)
+    
+    conn.close()
+    
+    return matches, players, tournaments
+>>>>>>> 2bb9c91b52049d1ef7aecaecebb90e2095358955
 
 # Carregar dados
 matches, players, tournaments = load_data()
@@ -66,15 +92,26 @@ print("Colunas disponíveis em matches:", matches.columns.tolist())
 # Título principal
 st.title("🎾 BLK Tennis Insights")
 
-# Sidebar para navegação
-st.sidebar.title("Navegação")
-page = st.sidebar.selectbox(
-    "Selecione a página:",
-    ["Análise de Jogadores", "Rankings"]
+# Obter query parameters
+params = get_query_params()
+
+# Navegação no topo com ícones
+page = st.selectbox(
+    "📍 Navegação:",
+    ["👤 Análise de Jogadores", "🏆 Rankings"],
+    index=0 if params['page'] == 'Análise de Jogadores' else 1,
+    format_func=lambda x: x.split(" ", 1)[1]  # Remove o emoji do display
 )
 
+# Atualizar query parameters quando a página mudar
+st.query_params['page'] = page.split(" ", 1)[1]  # Remove o emoji
+if params['player_id']:
+    st.query_params['player_id'] = params['player_id']
+
 # Exibir página selecionada
-if page == "Análise de Jogadores":
-    display_player_page(matches, players)
-elif page == "Rankings":
+if "Análise de Jogadores" in page:
+    # Armazenar o host na session_state
+    st.session_state['host'] = params['host']
+    display_player_page(matches, players, shared_player_id=params['player_id'])
+elif "Rankings" in page:
     display_rankings_page(matches, players, tournaments) 
