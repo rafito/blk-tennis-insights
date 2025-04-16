@@ -39,7 +39,25 @@ def get_query_params():
 @st.cache_data
 def load_data():
     with st.spinner('Carregando dados do banco...'):
-        conn = sqlite3.connect('challonge-scraper/database/database.sqlite')
+        # Tenta diferentes caminhos possíveis para o banco de dados
+        db_paths = [
+            'database.sqlite',
+            'challonge-scraper/database/database.sqlite',
+            '/app/database.sqlite'  # Caminho no Streamlit Cloud
+        ]
+        
+        conn = None
+        for path in db_paths:
+            try:
+                conn = sqlite3.connect(path)
+                break
+            except sqlite3.OperationalError:
+                continue
+        
+        if conn is None:
+            st.error("Não foi possível conectar ao banco de dados. Verifique se o arquivo database.sqlite está no local correto.")
+            return None, None, None
+            
         matches = pd.read_sql_query("SELECT * FROM matches", conn)
         players = pd.read_sql_query("SELECT * FROM players", conn)
         tournaments = pd.read_sql_query("SELECT * FROM tournaments", conn)
@@ -69,16 +87,6 @@ def load_data():
             matches = matches.rename(columns={'created_at': 'tournament_date'})
         
         return matches, players, tournaments
-    """Carrega os dados do banco SQLite"""
-    conn = sqlite3.connect('database.sqlite')
-    
-    matches = pd.read_sql_query("SELECT * FROM matches", conn)
-    players = pd.read_sql_query("SELECT * FROM players", conn)
-    tournaments = pd.read_sql_query("SELECT * FROM tournaments", conn)
-    
-    conn.close()
-    
-    return matches, players, tournaments
 
 # Carregar dados
 matches, players, tournaments = load_data()
