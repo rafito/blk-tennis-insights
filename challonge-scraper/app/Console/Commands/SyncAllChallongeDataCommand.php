@@ -29,11 +29,6 @@ class SyncAllChallongeDataCommand extends Command
         $this->call('challonge:sync');
         $this->info('challonge-sync concluído.');
 
-        // Executa tournaments:update-categories
-        $this->info('Executando tournaments:update-categories...');
-        $this->call('tournaments:update-categories');
-        $this->info('tournaments:update-categories concluído.');
-
         // Executa challonge:update-match-ids
         $this->info('Executando challonge:update-match-ids...');
         $this->call('challonge:update-match-ids');

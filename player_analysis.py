@@ -136,7 +136,7 @@ def get_match_history(matches, players, player_id):
     )
     
     # Criar um dicionário de nomes de jogadores para evitar problemas de índice
-    player_names = players.set_index('id')['name'].to_dict()
+    player_names = players.set_index('id')['name'].str.upper().to_dict()
     player_matches['opponent_name'] = player_matches['opponent_id'].map(player_names)
     
     # Adiciona resultado e placar formatado
@@ -387,7 +387,7 @@ def display_player_page(matches, players, shared_player_id=None):
     st.header("👤 Análise de Jogadores")
     
     # Seleção do jogador com opção vazia inicial
-    player_names = [""] + sorted(players['name'].tolist())
+    player_names = [""] + sorted(players['name'].str.upper().tolist())
     
     # Se tiver um jogador compartilhado, seleciona ele pelo ID
     default_index = 0
@@ -395,7 +395,7 @@ def display_player_page(matches, players, shared_player_id=None):
         player_id = int(shared_player_id)
         player_df = players[players['id'] == player_id]
         if not player_df.empty:
-            player_name = player_df['name'].iloc[0]
+            player_name = player_df['name'].iloc[0].upper()
             if player_name in player_names:
                 default_index = player_names.index(player_name)
     
@@ -411,7 +411,7 @@ def display_player_page(matches, players, shared_player_id=None):
         return
         
     # Obter ID do jogador selecionado
-    player_df = players[players['name'] == selected_player]
+    player_df = players[players['name'].str.upper() == selected_player]
     if player_df.empty:
         st.error("❌ Jogador não encontrado no banco de dados.")
         return
@@ -589,7 +589,7 @@ def display_player_page(matches, players, shared_player_id=None):
     
     # Obtém lista de oponentes que já jogaram contra o jogador selecionado
     opponent_ids = get_player_opponents(matches, player_id)
-    opponent_names = players[players['id'].isin(opponent_ids)]['name'].tolist()
+    opponent_names = players[players['id'].isin(opponent_ids)]['name'].str.upper().tolist()
     
     if not opponent_names:
         st.info("Este jogador ainda não tem confrontos registrados.")
@@ -601,7 +601,7 @@ def display_player_page(matches, players, shared_player_id=None):
         )
     
     if opponent:
-        opponent_df = players[players['name'] == opponent]
+        opponent_df = players[players['name'].str.upper() == opponent]
         if not opponent_df.empty:
             opponent_id = opponent_df['id'].iloc[0]
             
