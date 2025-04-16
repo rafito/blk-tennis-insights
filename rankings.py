@@ -54,6 +54,7 @@ def calculate_glicko_ratings(matches, players, tournaments, category=None, time_
     
     # Adicionar nomes dos jogadores
     ratings_df = ratings_df.merge(players[['id', 'name']], left_on='player_id', right_on='id')
+    ratings_df['name'] = ratings_df['name'].str.upper()
     ratings_df = ratings_df.sort_values('rating', ascending=False)
     
     return ratings_df
@@ -139,6 +140,7 @@ def calculate_points_ranking(matches, players, tournaments, category=None, time_
     
     # Adicionar nomes dos jogadores e ordenar por pontos (primeiro critério) e saldo de sets (segundo critério)
     ranking_df = ranking_df.merge(players[['id', 'name']], left_on='player_id', right_on='id')
+    ranking_df['name'] = ranking_df['name'].str.upper()
     ranking_df = ranking_df[ranking_df['points'] > 0].sort_values(['points', 'set_balance'], ascending=[False, False])
     
     return ranking_df
