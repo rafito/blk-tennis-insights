@@ -41,3 +41,18 @@ O dashboard estará disponível em `http://localhost:8501`
 - Análise detalhada de jogadores
 - Rankings por categoria
 - Insights e análises estatísticas 
+
+## O que fazer quando tiver torneio novo?
+
+```bash
+cd challonge-scraper
+
+php artisan challonge:sync-all
+ou
+php artisan challonge:sync-all --reset-db
+
+php artisan challonge:merge-participants --max-group-size=2
+
+cd ..
+cp challonge-scraper/database/database.sqlite .
+```
