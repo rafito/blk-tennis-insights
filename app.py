@@ -26,7 +26,7 @@ st.set_page_config(
 @st.cache_data
 def load_data():
     with st.spinner('Carregando dados do banco...'):
-        conn = sqlite3.connect('database.sqlite')
+        conn = sqlite3.connect('challonge-scraper/database/database.sqlite')
         matches = pd.read_sql_query("SELECT * FROM matches", conn)
         players = pd.read_sql_query("SELECT * FROM players", conn)
         tournaments = pd.read_sql_query("SELECT * FROM tournaments", conn)
