@@ -38,7 +38,6 @@ def get_query_params():
 
 @st.cache_data
 def load_data():
-<<<<<<< HEAD
     with st.spinner('Carregando dados do banco...'):
         conn = sqlite3.connect('challonge-scraper/database/database.sqlite')
         matches = pd.read_sql_query("SELECT * FROM matches", conn)
@@ -70,7 +69,6 @@ def load_data():
             matches = matches.rename(columns={'created_at': 'tournament_date'})
         
         return matches, players, tournaments
-=======
     """Carrega os dados do banco SQLite"""
     conn = sqlite3.connect('database.sqlite')
     
@@ -81,7 +79,6 @@ def load_data():
     conn.close()
     
     return matches, players, tournaments
->>>>>>> 2bb9c91b52049d1ef7aecaecebb90e2095358955
 
 # Carregar dados
 matches, players, tournaments = load_data()
