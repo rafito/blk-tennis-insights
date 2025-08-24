@@ -66,7 +66,9 @@ def calculate_points_ranking(matches, players, tournaments, category=None, time_
     filtered_matches = matches.copy()
     
     if category is not None and category != "Todas":
-        filtered_matches = filtered_matches[filtered_matches['tournament_category'] == category]
+        # Usar o mesmo método que o Glicko: filtrar por tournament_id baseado na categoria
+        tournament_ids = tournaments[tournaments['category'] == category]['id'].tolist()
+        filtered_matches = filtered_matches[filtered_matches['tournament_id'].isin(tournament_ids)]
     
     if time_period:
         if isinstance(time_period, str):
@@ -145,9 +147,104 @@ def calculate_points_ranking(matches, players, tournaments, category=None, time_
     
     return ranking_df
 
+def display_ranking_with_icons(ranking_df, ranking_type="Glicko"):
+    """Exibe ranking com ícones clicáveis para análise de jogadores"""
+    if ranking_df.empty:
+        return
+    
+    host = st.session_state.get('host', 'http://localhost:8502')
+    
+    # Criar HTML personalizado para cada linha do ranking
+    for i, (_, row) in enumerate(ranking_df.iterrows()):
+        player_id = row['player_id']
+        player_name = row['name']
+        position = i + 1
+        
+        # Link para análise do jogador
+        player_link = f"{host}?page=Análise de Jogadores&player_id={player_id}"
+        
+        # Definir cor de fundo baseada na posição
+        if position <= 3:
+            bg_color = "#fff3cd"  # Dourado para top 3
+            border_color = "#ffc107"
+        elif position <= 10:
+            bg_color = "#e6f3ff"  # Azul claro para top 10
+            border_color = "#007bff"
+        else:
+            bg_color = "#f8f9fa"  # Cinza claro para o resto
+            border_color = "#dee2e6"
+        
+        # Preparar dados específicos por tipo de ranking
+        if ranking_type == "Glicko":
+            rating = int(row['rating'])
+            rd = int(row['rd'])
+            extra_info = f"Rating: {rating} | RD: {rd}"
+        else:  # Pontos
+            points = int(row['points'])
+            set_balance = int(row['set_balance'])
+            extra_info = f"Pontos: {points:,} | Saldo: {set_balance:+d}"
+        
+        # Criar linha compacta do ranking
+        st.markdown(f"""
+        <div style="
+            border-left: 4px solid {border_color};
+            background-color: {bg_color};
+            padding: 8px 12px;
+            margin: 2px 0;
+            border-radius: 0 6px 6px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            min-height: 50px;
+        ">
+            <div style="display: flex; align-items: center; flex-grow: 1;">
+                <div style="
+                    font-weight: bold;
+                    font-size: 16px;
+                    color: #495057;
+                    margin-right: 12px;
+                    min-width: 35px;
+                    text-align: center;
+                ">
+                    {position}º
+                </div>
+                <div style="flex-grow: 1;">
+                    <span style="
+                        font-weight: bold;
+                        font-size: 16px;
+                        color: #212529;
+                        margin-right: 10px;
+                    ">{player_name}</span>
+                    <span style="
+                        font-size: 13px;
+                        color: #6c757d;
+                    ">({extra_info})</span>
+                </div>
+            </div>
+            <a href="{player_link}" target="_self" style="
+                text-decoration: none;
+                background-color: #007bff;
+                color: white;
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 12px;
+                border: none;
+                cursor: pointer;
+                transition: background-color 0.3s;
+                white-space: nowrap;
+            " title="Ver análise do jogador">
+                👤
+            </a>
+        </div>
+        """, unsafe_allow_html=True)
+
 def display_rankings_page(matches, players, tournaments):
     """Exibe a página de rankings"""
     st.header("Rankings")
+    
+    # Garantir que o host esteja disponível na session_state
+    if 'host' not in st.session_state:
+        st.session_state['host'] = 'http://localhost:8502'
     
     # Seleção de categoria e período
     col1, col2 = st.columns(2)
@@ -185,6 +282,72 @@ def display_rankings_page(matches, players, tournaments):
     else:
         time_period = None
     
+    # Mostrar informações sobre os torneios sendo computados
+    with st.expander("📊 Torneios Computados neste Ranking", expanded=False):
+        # Filtrar torneios pela categoria e período selecionados
+        filtered_tournaments = tournaments.copy()
+        
+        if category != "Todas":
+            filtered_tournaments = filtered_tournaments[filtered_tournaments['category'] == category]
+        
+        if time_period:
+            # Converter started_month_year para datetime para comparação
+            filtered_tournaments['started_date'] = pd.to_datetime(
+                filtered_tournaments['started_month_year'], 
+                format='%m/%Y'
+            )
+            filtered_tournaments = filtered_tournaments[
+                filtered_tournaments['started_date'] >= time_period
+            ]
+        
+        # Filtrar partidas para mostrar estatísticas
+        filtered_matches = matches.copy()
+        if category != "Todas":
+            tournament_ids = filtered_tournaments['id'].tolist()
+            filtered_matches = filtered_matches[filtered_matches['tournament_id'].isin(tournament_ids)]
+        
+        if time_period:
+            filtered_matches = filtered_matches[
+                pd.to_datetime(filtered_matches['started_month_year'], format='%m/%Y') >= time_period
+            ]
+        
+        # Mostrar estatísticas
+        col_stats1, col_stats2, col_stats3 = st.columns(3)
+        with col_stats1:
+            st.metric("Torneios", len(filtered_tournaments))
+        with col_stats2:
+            st.metric("Partidas", len(filtered_matches))
+        with col_stats3:
+            unique_players = pd.concat([
+                filtered_matches['winner_id'], 
+                filtered_matches['loser_id']
+            ]).nunique()
+            st.metric("Jogadores Ativos", unique_players)
+        
+        # Lista dos torneios
+        if not filtered_tournaments.empty:
+            st.subheader("Lista de Torneios:")
+            tournaments_display = filtered_tournaments[['name', 'started_month_year']].copy()
+            tournaments_display = tournaments_display.sort_values('started_month_year', ascending=False)
+            tournaments_display.columns = ['Nome do Torneio', 'Data (Mês/Ano)']
+            
+            st.dataframe(
+                tournaments_display,
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("Nenhum torneio encontrado para os filtros selecionados.")
+    
+    # Botão para limpar cache (útil para debug)
+    if st.button("🔄 Limpar Cache e Recalcular", help="Use se os dados não estiverem atualizados"):
+        st.cache_data.clear()
+        st.rerun()
+    
+    # Debug: Mostrar informações sobre o filtro de período
+    if time_period:
+        st.info(f"📅 Filtrando dados a partir de: {time_period.strftime('%d/%m/%Y')}")
+    
     # Calcular rankings
     with st.spinner('Calculando rankings...'):
         glicko_ratings = calculate_glicko_ratings(
@@ -220,51 +383,7 @@ def display_rankings_page(matches, players, tournaments):
         
         if not glicko_ratings.empty:
             with st.spinner('Preparando ranking Glicko-2...'):
-                # Preparar DataFrame do Glicko
-                glicko_df = glicko_ratings[['name', 'rating', 'rd']].rename(columns={
-                    'name': 'Jogador',
-                    'rating': 'Rating',
-                    'rd': 'Desvio Padrão'
-                })
-                
-                # Adicionar coluna de posição
-                glicko_df.insert(0, 'Pos.', range(1, len(glicko_df) + 1))
-                
-                # Estilizar tabela Glicko
-                def style_glicko_table(df):
-                    def color_rows(x):
-                        df_len = len(df)
-                        colors = []
-                        for i in range(df_len):
-                            if i < 10:  # Top 10
-                                colors.append('background-color: #e6f3ff')
-                            elif i % 2 == 0:
-                                colors.append('background-color: #f8f9fa')
-                            else:
-                                colors.append('')
-                        return colors
-                    
-                    def bold_top3(x):
-                        df_len = len(df)
-                        return ['font-weight: bold' if i < 3 else '' for i in range(len(df.columns))]
-                    
-                    return df.style.format({
-                        'Pos.': '{:.0f}',
-                        'Rating': '{:.0f}',
-                        'Desvio Padrão': '{:.0f}'
-                    }).apply(color_rows, axis=0).apply(bold_top3, axis=1).set_properties(**{
-                        'text-align': 'center',
-                        'font-size': '14px',
-                        'padding': '5px 15px'
-                    }).set_properties(subset=['Jogador'], **{
-                        'text-align': 'left'
-                    }).hide(axis="index")
-                
-                st.dataframe(
-                    style_glicko_table(glicko_df),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                display_ranking_with_icons(glicko_ratings, "Glicko")
         else:
             st.info("Não há dados suficientes para gerar o ranking Glicko-2 neste período.")
     
@@ -295,50 +414,6 @@ def display_rankings_page(matches, players, tournaments):
         
         if not points_ranking.empty:
             with st.spinner('Preparando ranking por pontos...'):
-                # Preparar DataFrame de pontos
-                points_df = points_ranking[['name', 'points', 'set_balance']].rename(columns={
-                    'name': 'Jogador',
-                    'points': 'Pontos',
-                    'set_balance': 'Saldo de Sets'
-                })
-                
-                # Adicionar coluna de posição
-                points_df.insert(0, 'Pos.', range(1, len(points_df) + 1))
-                
-                # Estilizar tabela de pontos
-                def style_points_table(df):
-                    def color_rows(x):
-                        df_len = len(df)
-                        colors = []
-                        for i in range(df_len):
-                            if i < 10:  # Top 10
-                                colors.append('background-color: #e6f3ff')
-                            elif i % 2 == 0:
-                                colors.append('background-color: #f8f9fa')
-                            else:
-                                colors.append('')
-                        return colors
-                    
-                    def bold_top3(x):
-                        df_len = len(df)
-                        return ['font-weight: bold' if i < 3 else '' for i in range(len(df.columns))]
-                    
-                    return df.style.format({
-                        'Pos.': '{:.0f}',
-                        'Pontos': '{:,.0f}',
-                        'Saldo de Sets': '{:+.0f}'
-                    }).apply(color_rows, axis=0).apply(bold_top3, axis=1).set_properties(**{
-                        'text-align': 'center',
-                        'font-size': '14px',
-                        'padding': '5px 15px'
-                    }).set_properties(subset=['Jogador'], **{
-                        'text-align': 'left'
-                    }).hide(axis="index")
-                
-                st.dataframe(
-                    style_points_table(points_df),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                display_ranking_with_icons(points_ranking, "Pontos")
         else:
             st.info("Não há dados suficientes para gerar o ranking por pontos neste período.") 

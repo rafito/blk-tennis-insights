@@ -5,6 +5,7 @@ import plotly.express as px
 import numpy as np
 from player_analysis import display_player_page
 from rankings import display_rankings_page
+from tournaments import display_tournaments_page
 import tracemalloc
 import warnings
 import asyncio
@@ -103,8 +104,8 @@ params = get_query_params()
 # Navegação no topo com ícones
 page = st.selectbox(
     "📍 Navegação:",
-    ["👤 Análise de Jogadores", "🏆 Rankings"],
-    index=0 if params['page'] == 'Análise de Jogadores' else 1,
+    ["👤 Análise de Jogadores", "🏆 Rankings", "🎾 Torneios"],
+    index=0 if params['page'] == 'Análise de Jogadores' else (1 if params['page'] == 'Rankings' else (2 if params['page'] == 'Torneios' else 0)),
     format_func=lambda x: x.split(" ", 1)[1]  # Remove o emoji do display
 )
 
@@ -119,4 +120,10 @@ if "Análise de Jogadores" in page:
     st.session_state['host'] = params['host']
     display_player_page(matches, players, shared_player_id=params['player_id'])
 elif "Rankings" in page:
-    display_rankings_page(matches, players, tournaments) 
+    # Armazenar o host na session_state
+    st.session_state['host'] = params['host']
+    display_rankings_page(matches, players, tournaments)
+elif "Torneios" in page:
+    # Armazenar o host na session_state
+    st.session_state['host'] = params['host']
+    display_tournaments_page(matches, players, tournaments) 

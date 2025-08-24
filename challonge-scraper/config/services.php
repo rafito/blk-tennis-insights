@@ -36,8 +36,8 @@ return [
     ],
 
     'challonge' => [
-        'username' => env('CHALLONGE_USERNAME'),
-        'api_key' => env('CHALLONGE_API_KEY'),
+        'username' => env('CHALLONGE_USERNAME', 'blktennis0707'),
+        'api_key' => env('CHALLONGE_API_KEY', 'h6SPsOGfQFv0faneOnyAsJfLjGh3ymfFHpLZY7kl'),
     ],
 
 ];
