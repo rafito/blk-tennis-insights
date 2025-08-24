@@ -14,6 +14,8 @@ Dashboard interativo para análise de dados de tênis da academia BLK Tennis.
 git clone [URL_DO_REPOSITÓRIO]
 cd blk-tennis-insights
 ```
+python3 -m venv venv
+source venv/bin/activate
 
 2. Instale as dependências:
 ```bash

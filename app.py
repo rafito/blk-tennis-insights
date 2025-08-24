@@ -20,7 +20,7 @@ warnings.filterwarnings("ignore", category=RuntimeWarning, message="coroutine.*n
 st.set_page_config(
     page_title="BLK Tennis Insights",
     page_icon="🎾",
-    layout="wide"
+    layout="centered"
 )
 
 # Função para obter query parameters e host

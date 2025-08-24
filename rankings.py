@@ -77,47 +77,87 @@ def calculate_points_ranking(matches, players, tournaments, category=None, time_
             pd.to_datetime(filtered_matches['started_month_year'], format='%m/%Y') >= time_period
         ]
     
-    def get_points_for_round(row):
+    def get_points_for_round(row, is_champion=False):
         if pd.isna(row['round']) or pd.isna(row['tournament_name']):
             return 0
             
         is_finals = 'FINALS' in str(row['tournament_name']).upper()
         
-        # Pontos para torneios FINALS
-        points_finals = {
-            3: 1000,  # Final
-            2: 650,   # Semifinal
-            1: 400    # Quartas
-        }
+        # Nova estrutura de pontos baseada nos Grand Slams
+        if is_finals:
+            # Torneios FINALS - estrutura adaptada
+            if row['round'] == 3:  # Final
+                return 2000 if is_champion else 1200  # Campeão vs Vice-campeão
+            elif row['round'] == 2:  # Semifinal
+                return 720
+            elif row['round'] == 1:  # Quartas
+                return 360
+        else:
+            # Torneios regulares - estrutura adaptada
+            if row['round'] == 4:  # Final
+                return 2000 if is_champion else 1200  # Campeão vs Vice-campeão
+            elif row['round'] == 3:  # Semifinal
+                return 720
+            elif row['round'] == 2:  # Quartas
+                return 360
+            elif row['round'] == 1:  # Oitavas/Primeira rodada
+                return 180
         
-        # Pontos para torneios regulares
-        points_regular = {
-            4: 1000,  # Final
-            3: 650,   # Semifinal
-            2: 400,   # Quartas
-            1: 200    # Primeira rodada
-        }
-        
-        points_map = points_finals if is_finals else points_regular
-        return points_map.get(row['round'], 0)
+        return 0
     
-    # Calcular pontos dos vencedores
-    filtered_matches['points'] = filtered_matches.apply(get_points_for_round, axis=1)
+    # Calcular pontos dos vencedores considerando se são campeões
+    points_list = []
+    for _, row in filtered_matches.iterrows():
+        # Verificar se é campeão do torneio
+        tournament_matches = filtered_matches[filtered_matches['tournament_id'] == row['tournament_id']]
+        max_round = tournament_matches['round'].max()
+        is_champion = (row['round'] == max_round)
+        
+        points = get_points_for_round(row, is_champion)
+        points_list.append(points)
+    
+    filtered_matches['points'] = points_list
     
     # Agrupa por jogador e torneio, pegando a última rodada (maior pontuação) de cada torneio
     tournament_points = filtered_matches.groupby(['winner_id', 'tournament_id'])['points'].max().reset_index()
     winners = tournament_points.groupby('winner_id')['points'].sum().reset_index()
     winners.columns = ['player_id', 'points']
     
-    # Calcular pontos dos perdedores na primeira rodada (10 pontos)
-    first_round_losers = filtered_matches[
-        ((filtered_matches['round'] == 1) & ~filtered_matches['tournament_name'].str.contains('FINALS', case=False, na=False)) |
-        ((filtered_matches['round'] == 1) & filtered_matches['tournament_name'].str.contains('FINALS', case=False, na=False))
-    ][['loser_id', 'tournament_id']].drop_duplicates()
+    # Calcular pontos dos perdedores (vice-campeões nas finais e participação)
+    losers_points_list = []
     
-    first_round_losers['points'] = 10
-    losers_points = first_round_losers.groupby('loser_id')['points'].sum().reset_index()
-    losers_points.columns = ['player_id', 'points']
+    for _, row in filtered_matches.iterrows():
+        loser_id = row['loser_id']
+        tournament_id = row['tournament_id']
+        round_num = row['round']
+        
+        # Verificar se é vice-campeão (perdedor da rodada mais alta)
+        tournament_matches = filtered_matches[filtered_matches['tournament_id'] == tournament_id]
+        max_round = tournament_matches['round'].max()
+        
+        if round_num == max_round:
+            # Vice-campeão (perdedor da final)
+            is_finals = 'FINALS' in str(row['tournament_name']).upper()
+            points = 1200  # Vice-campeão recebe 1200 pontos
+        elif round_num == 1:
+            # Perdedor na primeira rodada recebe pontos de participação
+            points = 10
+        else:
+            # Outros perdedores não recebem pontos (já receberam ao chegar na rodada)
+            points = 0
+        
+        if points > 0:
+            losers_points_list.append({
+                'player_id': loser_id,
+                'tournament_id': tournament_id,
+                'points': points
+            })
+    
+    if losers_points_list:
+        losers_df = pd.DataFrame(losers_points_list)
+        losers_points = losers_df.groupby('player_id')['points'].sum().reset_index()
+    else:
+        losers_points = pd.DataFrame(columns=['player_id', 'points'])
     
     # Combinar pontos de vencedores e perdedores
     all_points = pd.concat([winners, losers_points])
@@ -147,7 +187,159 @@ def calculate_points_ranking(matches, players, tournaments, category=None, time_
     
     return ranking_df
 
-def display_ranking_with_icons(ranking_df, ranking_type="Glicko"):
+@st.cache_data
+def get_player_points_breakdown(player_id, matches, players, tournaments, category=None, time_period=None):
+    """Retorna detalhamento dos pontos de um jogador específico"""
+    # Filtrar partidas por categoria e período se especificado
+    filtered_matches = matches.copy()
+    
+    if category is not None and category != "Todas":
+        tournament_ids = tournaments[tournaments['category'] == category]['id'].tolist()
+        filtered_matches = filtered_matches[filtered_matches['tournament_id'].isin(tournament_ids)]
+    
+    if time_period:
+        if isinstance(time_period, str):
+            time_period = pd.to_datetime(time_period)
+        filtered_matches = filtered_matches[
+            pd.to_datetime(filtered_matches['started_month_year'], format='%m/%Y') >= time_period
+        ]
+    
+    # Filtrar partidas onde o jogador participou
+    player_matches = filtered_matches[
+        (filtered_matches['winner_id'] == player_id) | 
+        (filtered_matches['loser_id'] == player_id)
+    ].copy()
+    
+    if player_matches.empty:
+        return pd.DataFrame()
+    
+    def get_points_for_round(row, is_champion=False):
+        if pd.isna(row['round']) or pd.isna(row['tournament_name']):
+            return 0
+            
+        is_finals = 'FINALS' in str(row['tournament_name']).upper()
+        
+        if is_finals:
+            if row['round'] == 3:  # Final
+                return 2000 if is_champion else 1200
+            elif row['round'] == 2:  # Semifinal
+                return 720
+            elif row['round'] == 1:  # Quartas
+                return 360
+        else:
+            if row['round'] == 4:  # Final
+                return 2000 if is_champion else 1200
+            elif row['round'] == 3:  # Semifinal
+                return 720
+            elif row['round'] == 2:  # Quartas
+                return 360
+            elif row['round'] == 1:  # Oitavas/Primeira rodada
+                return 180
+        
+        return 0
+    
+    # Calcular pontos por torneio
+    breakdown = []
+    
+    for tournament_id in player_matches['tournament_id'].unique():
+        tournament_matches = player_matches[player_matches['tournament_id'] == tournament_id]
+        tournament_info = tournaments[tournaments['id'] == tournament_id].iloc[0]
+        
+        # Encontrar a melhor performance no torneio
+        best_performance = None
+        max_points = 0
+        
+        # Verificar vitórias (performance como vencedor)
+        wins = tournament_matches[tournament_matches['winner_id'] == player_id]
+        if not wins.empty:
+            max_round_won = wins['round'].max()
+            best_win = wins[wins['round'] == max_round_won].iloc[0]
+            
+            # Verificar se é campeão
+            all_tournament_matches = filtered_matches[filtered_matches['tournament_id'] == tournament_id]
+            tournament_max_round = all_tournament_matches['round'].max()
+            is_champion = (max_round_won == tournament_max_round)
+            
+            points = get_points_for_round(best_win, is_champion)
+            if points > max_points:
+                max_points = points
+                round_name = get_round_name(best_win['round'], tournament_info['name'])
+                status = "Campeão" if is_champion else f"Venceu {round_name}"
+                best_performance = {
+                    'tournament': tournament_info['name'],
+                    'date': tournament_info['started_month_year'],
+                    'performance': status,
+                    'points': points
+                }
+        
+        # Verificar derrotas (performance como perdedor)
+        losses = tournament_matches[tournament_matches['loser_id'] == player_id]
+        if not losses.empty:
+            max_round_lost = losses['round'].max()
+            best_loss = losses[losses['round'] == max_round_lost].iloc[0]
+            
+            # Verificar se é vice-campeão
+            all_tournament_matches = filtered_matches[filtered_matches['tournament_id'] == tournament_id]
+            tournament_max_round = all_tournament_matches['round'].max()
+            
+            if max_round_lost == tournament_max_round:
+                # Vice-campeão
+                points = 1200
+                if points > max_points:
+                    max_points = points
+                    best_performance = {
+                        'tournament': tournament_info['name'],
+                        'date': tournament_info['started_month_year'],
+                        'performance': "Vice-campeão",
+                        'points': points
+                    }
+            elif max_round_lost == 1:
+                # Perdeu na primeira rodada - pontos de participação
+                points = 10
+                if max_points == 0:  # Só se não tiver outras performances
+                    max_points = points
+                    best_performance = {
+                        'tournament': tournament_info['name'],
+                        'date': tournament_info['started_month_year'],
+                        'performance': "Participação (1ª rodada)",
+                        'points': points
+                    }
+        
+        if best_performance:
+            breakdown.append(best_performance)
+    
+    # Converter para DataFrame e ordenar por pontos
+    if breakdown:
+        breakdown_df = pd.DataFrame(breakdown)
+        breakdown_df = breakdown_df.sort_values('points', ascending=False)
+        return breakdown_df
+    else:
+        return pd.DataFrame()
+
+def get_round_name(round_num, tournament_name):
+    """Converte número da rodada para nome legível"""
+    is_finals = 'FINALS' in str(tournament_name).upper()
+    
+    if is_finals:
+        if round_num == 3:
+            return "Final"
+        elif round_num == 2:
+            return "Semifinal"
+        elif round_num == 1:
+            return "Quartas"
+    else:
+        if round_num == 4:
+            return "Final"
+        elif round_num == 3:
+            return "Semifinal"
+        elif round_num == 2:
+            return "Quartas"
+        elif round_num == 1:
+            return "Oitavas/1ª rodada"
+    
+    return f"Rodada {round_num}"
+
+def display_ranking_with_icons(ranking_df, ranking_type="Glicko", matches=None, players=None, tournaments=None, category=None, time_period=None):
     """Exibe ranking com ícones clicáveis para análise de jogadores"""
     if ranking_df.empty:
         return
@@ -179,64 +371,59 @@ def display_ranking_with_icons(ranking_df, ranking_type="Glicko"):
             rating = int(row['rating'])
             rd = int(row['rd'])
             extra_info = f"Rating: {rating} | RD: {rd}"
+            show_points_button = False
         else:  # Pontos
             points = int(row['points'])
             set_balance = int(row['set_balance'])
             extra_info = f"Pontos: {points:,} | Saldo: {set_balance:+d}"
+            show_points_button = True
         
-        # Criar linha compacta do ranking
-        st.markdown(f"""
-        <div style="
-            border-left: 4px solid {border_color};
-            background-color: {bg_color};
-            padding: 8px 12px;
-            margin: 2px 0;
-            border-radius: 0 6px 6px 0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            min-height: 50px;
-        ">
-            <div style="display: flex; align-items: center; flex-grow: 1;">
-                <div style="
-                    font-weight: bold;
-                    font-size: 16px;
-                    color: #495057;
-                    margin-right: 12px;
-                    min-width: 35px;
-                    text-align: center;
-                ">
-                    {position}º
-                </div>
-                <div style="flex-grow: 1;">
-                    <span style="
-                        font-weight: bold;
-                        font-size: 16px;
-                        color: #212529;
-                        margin-right: 10px;
-                    ">{player_name}</span>
-                    <span style="
-                        font-size: 13px;
-                        color: #6c757d;
-                    ">({extra_info})</span>
-                </div>
-            </div>
-            <a href="{player_link}" target="_self" style="
-                text-decoration: none;
-                background-color: #007bff;
-                color: white;
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 12px;
-                border: none;
-                cursor: pointer;
-                transition: background-color 0.3s;
-                white-space: nowrap;
-            " title="Ver análise do jogador">
-                👤
-            </a>
-        </div>
-        """, unsafe_allow_html=True)
+        # Linha com layout em colunas e ações à direita
+        key_suffix = f"{ranking_type}_{player_id}"
+        medal = ""
+        if position == 1:
+            medal = "🥇"
+        elif position == 2:
+            medal = "🥈"
+        elif position == 3:
+            medal = "🥉"
+
+        col_pos, col_name, col_stats, col_actions = st.columns([1, 6, 3, 2])
+        with col_pos:
+            st.markdown(f"**{position}º** {medal}")
+        with col_name:
+            st.markdown(f"**{player_name}**")
+        with col_stats:
+            st.caption(extra_info)
+        with col_actions:
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("👤", key=f"profile_{key_suffix}", help="Ver análise do jogador"):
+                    st.query_params["page"] = "Análise de Jogadores"
+                    st.query_params["player_id"] = str(player_id)
+                    st.rerun()
+            with c2:
+                if show_points_button and matches is not None:
+                    with st.popover("📊", use_container_width=False):
+                        st.markdown(f"**{player_name}** — Detalhes dos pontos")
+                        with st.spinner("Carregando..."):
+                            breakdown_df = get_player_points_breakdown(
+                                player_id, matches, players, tournaments, category, time_period
+                            )
+                        if breakdown_df is not None and not breakdown_df.empty:
+                            st.metric("Total", f"{int(breakdown_df['points'].sum()):,} pts")
+                            show_df = breakdown_df.rename(columns={
+                                'tournament': 'Torneio',
+                                'date': 'Data',
+                                'performance': 'Resultado',
+                                'points': 'Pontos'
+                            })[["Torneio","Data","Resultado","Pontos"]]
+                            st.dataframe(show_df, hide_index=True, use_container_width=True)
+                        else:
+                            st.info("Sem pontos no período.")
+        st.divider()
+        
+        # Removido bloco expandido para evitar poluição visual; usando popover acima
 
 def display_rankings_page(matches, players, tournaments):
     """Exibe a página de rankings"""
@@ -383,7 +570,10 @@ def display_rankings_page(matches, players, tournaments):
         
         if not glicko_ratings.empty:
             with st.spinner('Preparando ranking Glicko-2...'):
-                display_ranking_with_icons(glicko_ratings, "Glicko")
+                display_ranking_with_icons(
+                    glicko_ratings, "Glicko", 
+                    matches, players, tournaments, category, time_period
+                )
         else:
             st.info("Não há dados suficientes para gerar o ranking Glicko-2 neste período.")
     
@@ -393,27 +583,32 @@ def display_rankings_page(matches, players, tournaments):
         # Substituir card de info por expander
         with st.expander("ℹ️ Como funciona o Ranking por Pontos?"):
             st.write("""
-            O ranking por pontos é baseado na performance em torneios:
+            O ranking por pontos segue o sistema dos Grand Slams de tênis:
             
-            Torneios Regulares:
-            - Campeão: 1000 pontos
-            - Vice-campeão: 650 pontos
-            - Semifinal: 400 pontos
-            - Primeira rodada: 200 pontos
+            **Sistema de Pontuação:**
+            - **Campeão:** 2.000 pontos
+            - **Vice-campeão:** 1.200 pontos
+            - **Semifinalistas:** 720 pontos
+            - **Quartas de final:** 360 pontos
+            - **Oitavas/Primeira rodada:** 180 pontos
             
-            Torneios Finals:
-            - Campeão: 1000 pontos
-            - Vice-campeão: 650 pontos
-            - Semifinal: 400 pontos
+            **Torneios FINALS:**
+            - Seguem a mesma estrutura, mas com menos rodadas
+            - Final: Campeão (2.000) vs Vice-campeão (1.200)
+            - Semifinal: 720 pontos
+            - Quartas: 360 pontos
             
-            Pontos de Participação:
-            - Todo jogador que participa de um torneio recebe 10 pontos se perder na primeira rodada.
+            **Pontos de Participação:**
+            - Jogadores que perdem na primeira rodada recebem 10 pontos de participação
             
-            Critérios de desempate: Saldo de Sets
+            **Critérios de desempate:** Saldo de Sets
             """)
         
         if not points_ranking.empty:
             with st.spinner('Preparando ranking por pontos...'):
-                display_ranking_with_icons(points_ranking, "Pontos")
+                display_ranking_with_icons(
+                    points_ranking, "Pontos", 
+                    matches, players, tournaments, category, time_period
+                )
         else:
             st.info("Não há dados suficientes para gerar o ranking por pontos neste período.") 
