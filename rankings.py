@@ -140,10 +140,15 @@ def calculate_points_ranking(matches, players, tournaments, category=None, time_
             points = 1200  # Vice-campeão recebe 1200 pontos
         elif round_num == 1:
             # Perdedor na primeira rodada recebe pontos de participação
-            points = 10
+            points = 180
         else:
-            # Outros perdedores não recebem pontos (já receberam ao chegar na rodada)
-            points = 0
+            # Outros perdedores recebem pontos baseados na rodada que perderam
+            if round_num == max_round - 1:  # Perdedor na semifinal
+                points = 720
+            elif round_num == max_round - 2:  # Perdedor nas quartas
+                points = 360
+            else:
+                points = 0
         
         if points > 0:
             losers_points_list.append({
@@ -305,31 +310,24 @@ def get_player_points_breakdown(player_id, matches, players, tournaments, catego
                         'points': points
                     }
                 else:
-                    # Pontos são referentes à melhor vitória obtida
-                    if not wins.empty:
-                        max_round_won = int(wins['round'].max())
-                        best_win = wins[wins['round'] == max_round_won].iloc[0]
-                        points = int(get_points_for_round(best_win, is_champion=False))
-                        if points > max_points:
-                            max_points = points
-                            best_performance = {
-                                'tournament': tournament_info['name'],
-                                'date': tournament_info['started_month_year'],
-                                'performance': loss_phrase(max_round_lost, tournament_info['name']),
-                                'points': points
-                            }
+                    # Determinar pontos baseados na rodada em que perdeu
+                    if max_round_lost == tournament_max_round - 1:  # Perdeu na semifinal
+                        points = 720
+                    elif max_round_lost == tournament_max_round - 2:  # Perdeu nas quartas
+                        points = 360
+                    elif max_round_lost == 1:  # Perdeu na primeira rodada
+                        points = 180
                     else:
-                        # Sem vitórias: pode ser eliminação na 1ª rodada (participação)
-                        if max_round_lost == 1:
-                            points = 10
-                            if max_points == 0:
-                                max_points = points
-                                best_performance = {
-                                    'tournament': tournament_info['name'],
-                                    'date': tournament_info['started_month_year'],
-                                    'performance': "Perdeu na 1ª rodada",
-                                    'points': points
-                                }
+                        points = 0
+                    
+                    if points > 0:
+                        max_points = points
+                        best_performance = {
+                            'tournament': tournament_info['name'],
+                            'date': tournament_info['started_month_year'],
+                            'performance': loss_phrase(max_round_lost, tournament_info['name']),
+                            'points': points
+                        }
         
         if best_performance:
             breakdown.append(best_performance)
@@ -624,19 +622,16 @@ def display_rankings_page(matches, players, tournaments):
             
             **Sistema de Pontuação:**
             - **Campeão:** 2.000 pontos
-            - **Vice-campeão:** 1.200 pontos
-            - **Semifinalistas:** 720 pontos
-            - **Quartas de final:** 360 pontos
-            - **Oitavas/Primeira rodada:** 180 pontos
+            - **Vice-campeão (perdedor da final):** 1.200 pontos
+            - **Perdedor na semifinal:** 720 pontos
+            - **Perdedor nas quartas de final:** 360 pontos
+            - **Perdedor na primeira rodada:** 180 pontos
             
             **Torneios FINALS:**
             - Seguem a mesma estrutura, mas com menos rodadas
             - Final: Campeão (2.000) vs Vice-campeão (1.200)
-            - Semifinal: 720 pontos
-            - Quartas: 360 pontos
-            
-            **Pontos de Participação:**
-            - Jogadores que perdem na primeira rodada recebem 10 pontos de participação
+            - Semifinal: 720 pontos (perdedor)
+            - Quartas: 360 pontos (perdedor)
             
             **Critérios de desempate:** Saldo de Sets
             """)
