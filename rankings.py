@@ -118,10 +118,9 @@ def calculate_points_ranking(matches, players, tournaments, category=None, time_
     
     filtered_matches['points'] = points_list
     
-    # Agrupa por jogador e torneio, pegando a última rodada (maior pontuação) de cada torneio
-    tournament_points = filtered_matches.groupby(['winner_id', 'tournament_id'])['points'].max().reset_index()
-    winners = tournament_points.groupby('winner_id')['points'].sum().reset_index()
-    winners.columns = ['player_id', 'points']
+    # Pontos dos vencedores por torneio (pegar a maior rodada vencida no torneio)
+    winners_tournament_points = filtered_matches.groupby(['winner_id', 'tournament_id'])['points'].max().reset_index()
+    winners_tournament_points = winners_tournament_points.rename(columns={'winner_id': 'player_id'})
     
     # Calcular pontos dos perdedores (vice-campeões nas finais e participação)
     losers_points_list = []
@@ -155,13 +154,18 @@ def calculate_points_ranking(matches, players, tournaments, category=None, time_
     
     if losers_points_list:
         losers_df = pd.DataFrame(losers_points_list)
-        losers_points = losers_df.groupby('player_id')['points'].sum().reset_index()
+        # Pontos dos perdedores por torneio (ex.: vice-campeão, participação)
+        losers_tournament_points = losers_df.groupby(['player_id', 'tournament_id'])['points'].max().reset_index()
     else:
-        losers_points = pd.DataFrame(columns=['player_id', 'points'])
-    
-    # Combinar pontos de vencedores e perdedores
-    all_points = pd.concat([winners, losers_points])
-    all_points = all_points.groupby('player_id')['points'].sum().reset_index()
+        losers_tournament_points = pd.DataFrame(columns=['player_id', 'tournament_id', 'points'])
+
+    # Combinar por torneio e pegar o melhor resultado do jogador em cada torneio (evita somar 720 + 1200)
+    combined_tournament_points = pd.concat([winners_tournament_points, losers_tournament_points], ignore_index=True)
+    if not combined_tournament_points.empty:
+        best_tournament_points = combined_tournament_points.groupby(['player_id', 'tournament_id'])['points'].max().reset_index()
+        all_points = best_tournament_points.groupby('player_id')['points'].sum().reset_index()
+    else:
+        all_points = pd.DataFrame(columns=['player_id', 'points'])
     
     # Calcular saldo de sets para cada jogador
     set_balance = filtered_matches.groupby('winner_id')['set_balance'].sum().reset_index()
@@ -238,6 +242,26 @@ def get_player_points_breakdown(player_id, matches, players, tournaments, catego
         
         return 0
     
+    def get_stage_label(round_num, tournament_name):
+        """Retorna o nome da etapa (sem preposição) para compor frases de derrota."""
+        is_finals = 'FINALS' in str(tournament_name).upper()
+        if is_finals:
+            mapping = {1: 'Quartas', 2: 'Semifinal', 3: 'Final'}
+        else:
+            mapping = {1: 'Oitavas', 2: 'Quartas', 3: 'Semifinal', 4: 'Final'}
+        return mapping.get(int(round_num), f"Rodada {int(round_num)}")
+    
+    def loss_phrase(round_num, tournament_name):
+        """Monta a frase 'Perdeu na(s) X' com a preposição correta."""
+        if int(round_num) == 1 and 'FINALS' not in str(tournament_name).upper():
+            # Caso especial para torneios regulares onde 1 é 'Oitavas' (plural)
+            label = get_stage_label(round_num, tournament_name)
+            prep = 'nas' if label in ('Quartas', 'Oitavas') else 'na'
+            return f"Perdeu {prep} {label}"
+        label = get_stage_label(round_num, tournament_name)
+        prep = 'nas' if label in ('Quartas', 'Oitavas') else 'na'
+        return f"Perdeu {prep} {label}"
+    
     # Calcular pontos por torneio
     breakdown = []
     
@@ -245,65 +269,67 @@ def get_player_points_breakdown(player_id, matches, players, tournaments, catego
         tournament_matches = player_matches[player_matches['tournament_id'] == tournament_id]
         tournament_info = tournaments[tournaments['id'] == tournament_id].iloc[0]
         
-        # Encontrar a melhor performance no torneio
+        # Encontrar a melhor performance no torneio com rótulo de etapa alcançada
         best_performance = None
         max_points = 0
-        
-        # Verificar vitórias (performance como vencedor)
+
         wins = tournament_matches[tournament_matches['winner_id'] == player_id]
-        if not wins.empty:
-            max_round_won = wins['round'].max()
-            best_win = wins[wins['round'] == max_round_won].iloc[0]
-            
-            # Verificar se é campeão
-            all_tournament_matches = filtered_matches[filtered_matches['tournament_id'] == tournament_id]
-            tournament_max_round = all_tournament_matches['round'].max()
-            is_champion = (max_round_won == tournament_max_round)
-            
-            points = get_points_for_round(best_win, is_champion)
-            if points > max_points:
-                max_points = points
-                round_name = get_round_name(best_win['round'], tournament_info['name'])
-                status = "Campeão" if is_champion else f"Venceu {round_name}"
-                best_performance = {
-                    'tournament': tournament_info['name'],
-                    'date': tournament_info['started_month_year'],
-                    'performance': status,
-                    'points': points
-                }
-        
-        # Verificar derrotas (performance como perdedor)
         losses = tournament_matches[tournament_matches['loser_id'] == player_id]
-        if not losses.empty:
-            max_round_lost = losses['round'].max()
-            best_loss = losses[losses['round'] == max_round_lost].iloc[0]
-            
-            # Verificar se é vice-campeão
-            all_tournament_matches = filtered_matches[filtered_matches['tournament_id'] == tournament_id]
-            tournament_max_round = all_tournament_matches['round'].max()
-            
-            if max_round_lost == tournament_max_round:
-                # Vice-campeão
-                points = 1200
-                if points > max_points:
+
+        all_tournament_matches = filtered_matches[filtered_matches['tournament_id'] == tournament_id]
+        tournament_max_round = all_tournament_matches['round'].max()
+
+        # Caso 1: Campeão
+        if not wins.empty and wins['round'].max() == tournament_max_round:
+            best_win = wins[wins['round'] == wins['round'].max()].iloc[0]
+            points = get_points_for_round(best_win, is_champion=True)
+            max_points = points
+            best_performance = {
+                'tournament': tournament_info['name'],
+                'date': tournament_info['started_month_year'],
+                'performance': "Campeão",
+                'points': points
+            }
+        else:
+            # Derrota existente define a etapa alcançada
+            if not losses.empty:
+                max_round_lost = int(losses['round'].max())
+                # Caso 2: Perdeu na Final (vice)
+                if max_round_lost == int(tournament_max_round):
+                    points = 1200
                     max_points = points
                     best_performance = {
                         'tournament': tournament_info['name'],
                         'date': tournament_info['started_month_year'],
-                        'performance': "Vice-campeão",
+                        'performance': loss_phrase(max_round_lost, tournament_info['name']),
                         'points': points
                     }
-            elif max_round_lost == 1:
-                # Perdeu na primeira rodada - pontos de participação
-                points = 10
-                if max_points == 0:  # Só se não tiver outras performances
-                    max_points = points
-                    best_performance = {
-                        'tournament': tournament_info['name'],
-                        'date': tournament_info['started_month_year'],
-                        'performance': "Participação (1ª rodada)",
-                        'points': points
-                    }
+                else:
+                    # Pontos são referentes à melhor vitória obtida
+                    if not wins.empty:
+                        max_round_won = int(wins['round'].max())
+                        best_win = wins[wins['round'] == max_round_won].iloc[0]
+                        points = int(get_points_for_round(best_win, is_champion=False))
+                        if points > max_points:
+                            max_points = points
+                            best_performance = {
+                                'tournament': tournament_info['name'],
+                                'date': tournament_info['started_month_year'],
+                                'performance': loss_phrase(max_round_lost, tournament_info['name']),
+                                'points': points
+                            }
+                    else:
+                        # Sem vitórias: pode ser eliminação na 1ª rodada (participação)
+                        if max_round_lost == 1:
+                            points = 10
+                            if max_points == 0:
+                                max_points = points
+                                best_performance = {
+                                    'tournament': tournament_info['name'],
+                                    'date': tournament_info['started_month_year'],
+                                    'performance': "Perdeu na 1ª rodada",
+                                    'points': points
+                                }
         
         if best_performance:
             breakdown.append(best_performance)
@@ -540,10 +566,7 @@ def display_rankings_page(matches, players, tournaments):
         else:
             st.info("Nenhum torneio encontrado para os filtros selecionados.")
     
-    # Botão para limpar cache (útil para debug)
-    if st.button("🔄 Limpar Cache e Recalcular", help="Use se os dados não estiverem atualizados"):
-        st.cache_data.clear()
-        st.rerun()
+    # Botão de cache removido daqui; refresh global no app
     
     # Debug: Mostrar informações sobre o filtro de período
     if time_period:
