@@ -11,7 +11,8 @@ class ChallongeMergeParticipantsCommand extends Command
 {
     protected $signature = 'challonge:merge-participants 
         {--similarity=80 : Porcentagem mínima de similaridade para considerar duplicatas}
-        {--max-group-size=0 : Número máximo de participantes similares em um grupo (0 = sem limite)}';
+        {--max-group-size=0 : Número máximo de participantes similares em um grupo (0 = sem limite)}
+        {--exact-only : Agrupa apenas nomes efetivamente idênticos (ignora threshold de similaridade)}';
     protected $description = 'Mescla participantes duplicados baseado na similaridade dos nomes';
     protected $cacheFile = 'storage/app/merge_decisions.json';
 
@@ -101,6 +102,7 @@ class ChallongeMergeParticipantsCommand extends Command
         $this->info('Iniciando processo de mesclagem de participantes...');
         $similarityThreshold = $this->option('similarity');
         $maxGroupSize = (int)$this->option('max-group-size');
+        $exactOnly = $this->option('exact-only');
 
         // Busca todos os participantes
         $participants = ChallongeParticipant::all();
@@ -108,34 +110,73 @@ class ChallongeMergeParticipantsCommand extends Command
 
         // Array para armazenar grupos de participantes similares
         $similarGroups = [];
+        $processedParticipants = [];
 
-        // Compara cada participante com todos os outros
-        foreach ($participants as $p1) {
-            $found = false;
-            foreach ($similarGroups as &$group) {
-                // Se o grupo já atingiu o tamanho máximo, pula
-                if ($maxGroupSize > 0 && count($group) >= $maxGroupSize) {
+        if ($exactOnly) {
+            $this->info("Buscando grupos com nomes efetivamente idênticos...");
+
+            // Agrupa apenas participantes com nomes efetivamente idênticos
+            foreach ($participants as $p1) {
+                if (in_array($p1->id, $processedParticipants)) {
                     continue;
                 }
 
-                // Verifica se o participante atual é similar a qualquer um do grupo
-                foreach ($group as $p) {
-                    if ($this->calculateSimilarity($p1->name, $p->name) >= $similarityThreshold) {
-                        // Se o grupo já atingiu o tamanho máximo, não adiciona
-                        if ($maxGroupSize > 0 && count($group) >= $maxGroupSize) {
-                            break;
-                        }
-                        $group[] = $p1;
-                        $found = true;
-                        break 2;
+                $exactGroup = [$p1];
+                $processedParticipants[] = $p1->id;
+
+                foreach ($participants as $p2) {
+                    if (in_array($p2->id, $processedParticipants) || $p1->id === $p2->id) {
+                        continue;
+                    }
+
+                    // Se o grupo já atingiu o tamanho máximo, para
+                    if ($maxGroupSize > 0 && count($exactGroup) >= $maxGroupSize) {
+                        break;
+                    }
+
+                    // Agrupa apenas se forem efetivamente idênticos
+                    if ($this->areNamesEffectivelyIdentical($p1->name, $p2->name)) {
+                        $exactGroup[] = $p2;
+                        $processedParticipants[] = $p2->id;
                     }
                 }
+
+                $similarGroups[] = $exactGroup;
             }
-            
-            // Se não encontrou grupo similar, cria um novo
-            if (!$found) {
-                $similarGroups[] = [$p1];
+
+            $this->info("Encontrados " . count(array_filter($similarGroups, function($group) { return count($group) > 1; })) . " grupos com duplicatas efetivamente idênticas.");
+        } else {
+            $this->info("Buscando grupos com similaridade >= {$similarityThreshold}%...");
+
+            // Usa o algoritmo de similaridade por threshold
+            foreach ($participants as $p1) {
+                if (in_array($p1->id, $processedParticipants)) {
+                    continue;
+                }
+
+                $currentGroup = [$p1];
+                $processedParticipants[] = $p1->id;
+
+                foreach ($participants as $p2) {
+                    if (in_array($p2->id, $processedParticipants) || $p1->id === $p2->id) {
+                        continue;
+                    }
+
+                    // Se o grupo já atingiu o tamanho máximo, para
+                    if ($maxGroupSize > 0 && count($currentGroup) >= $maxGroupSize) {
+                        break;
+                    }
+
+                    if ($this->calculateSimilarity($p1->name, $p2->name) >= $similarityThreshold) {
+                        $currentGroup[] = $p2;
+                        $processedParticipants[] = $p2->id;
+                    }
+                }
+
+                $similarGroups[] = $currentGroup;
             }
+
+            $this->info("Encontrados " . count(array_filter($similarGroups, function($group) { return count($group) > 1; })) . " grupos com similaridade >= {$similarityThreshold}%.");
         }
 
         // Processa cada grupo de participantes similares
