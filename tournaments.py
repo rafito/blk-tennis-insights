@@ -23,33 +23,81 @@ def get_tournament_champion(matches, tournament_id):
     
     return None
 
+def get_participant_seeds(tournament_id):
+    """Busca informações de seed dos participantes do torneio"""
+    try:
+        # Tentar diferentes caminhos para o banco de dados
+        db_paths = [
+            'database.sqlite',
+            'challonge-scraper/database/database.sqlite',
+            '/app/database.sqlite'
+        ]
+        
+        conn = None
+        for path in db_paths:
+            try:
+                conn = sqlite3.connect(path)
+                break
+            except sqlite3.OperationalError:
+                continue
+        
+        if conn is None:
+            return {}
+        
+        # Buscar seeds dos participantes
+        query = """
+        SELECT id, seed, final_rank 
+        FROM challonge_participants 
+        WHERE tournament_id = ?
+        """
+        
+        seeds_df = pd.read_sql_query(query, conn, params=(tournament_id,))
+        conn.close()
+        
+        # Criar dicionário para lookup rápido
+        seeds_dict = {}
+        for _, row in seeds_df.iterrows():
+            if pd.notna(row['seed']) and row['seed'] is not None:
+                seeds_dict[row['id']] = {
+                    'seed': row['seed'],
+                    'final_rank': row['final_rank']
+                }
+        
+        return seeds_dict
+    except Exception as e:
+        print(f"Erro ao buscar seeds: {e}")
+        return {}
+
 def create_tournament_bracket(matches, tournament_id, tournament_name):
-    """Cria a visualização da chave do torneio"""
+    """Cria a visualização da chave do torneio em ASCII"""
     tournament_matches = matches[matches['tournament_id'] == tournament_id].copy()
     
     if tournament_matches.empty:
         st.warning(f"Nenhuma partida encontrada para o torneio {tournament_name}")
         return
     
+    # Buscar informações de seed dos participantes
+    participant_seeds = get_participant_seeds(tournament_id)
+    
     # Organizar partidas por rodada
     rounds = sorted(tournament_matches['round'].unique())
     
-    # Criar estrutura da chave
-    st.subheader(f"🏆 Chave do Torneio: {tournament_name}")
-    
     # Identificar o campeão
     champion = get_tournament_champion(matches, tournament_id)
-    if champion:
-        st.success(f"🥇 **Campeão:** {champion['name']}")
     
-    # Determinar nomes das rodadas baseado no número total de rodadas
+    st.markdown(f"## 🏆 {tournament_name}")
+    
+    if champion:
+        st.success(f"🥇 **CAMPEÃO: {champion['name']}**")
+    
+    # Determinar nomes das rodadas
     max_round = max(rounds)
     round_names = {}
     
     if max_round == 4:
-        round_names = {1: "1ª Rodada", 2: "Quartas de Final", 3: "Semifinal", 4: "Final"}
+        round_names = {1: "1ª Rodada", 2: "Quartas", 3: "Semifinal", 4: "Final"}
     elif max_round == 3:
-        round_names = {1: "Quartas de Final", 2: "Semifinal", 3: "Final"}
+        round_names = {1: "Quartas", 2: "Semifinal", 3: "Final"}
     elif max_round == 2:
         round_names = {1: "Semifinal", 2: "Final"}
     elif max_round == 1:
@@ -58,95 +106,151 @@ def create_tournament_bracket(matches, tournament_id, tournament_name):
         for r in rounds:
             round_names[r] = f"Rodada {r}"
     
-    # Mostrar partidas por rodada em formato de chave ATP
-    cols = st.columns(len(rounds))
+    # Obter host da session_state para criar links
+    host = st.session_state.get('host', 'http://localhost:8502')
     
-    for i, round_num in enumerate(rounds):
-        with cols[i]:
-            round_name = round_names.get(round_num, f"Rodada {round_num}")
-            st.markdown(f"### {round_name}")
+    # Organizar dados para ASCII art
+    rounds_data = {}
+    for round_num in rounds:
+        round_matches = tournament_matches[tournament_matches['round'] == round_num].sort_values('match_id')
+        rounds_data[round_num] = []
+        
+        for _, match in round_matches.iterrows():
+            winner_name = match['winner_name']
+            loser_name = match['loser_name']
+            score = match['score'] if pd.notna(match['score']) else "A definir"
             
-            round_matches = tournament_matches[tournament_matches['round'] == round_num].sort_values('match_id')
+            # Buscar seeds
+            winner_seed_info = participant_seeds.get(match['winner_id'], {})
+            loser_seed_info = participant_seeds.get(match['loser_id'], {})
             
-            for j, (_, match) in enumerate(round_matches.iterrows()):
-                # Criar card da partida estilo ATP
-                winner_name = match['winner_name']
-                loser_name = match['loser_name']
-                score = match['score'] if pd.notna(match['score']) else "N/A"
+            winner_seed = winner_seed_info.get('seed')
+            loser_seed = loser_seed_info.get('seed')
+            
+            # Formattar nomes com seed em CAPS LOCK
+            winner_display = f"#{winner_seed} {winner_name.upper()}" if winner_seed else winner_name.upper()
+            loser_display = f"#{loser_seed} {loser_name.upper()}" if loser_seed else loser_name.upper()
+            
+            # Truncar nomes se muito longos
+            if len(winner_display) > 18:
+                winner_display = winner_display[:15] + "..."
+            if len(loser_display) > 18:
+                loser_display = loser_display[:15] + "..."
+            
+            rounds_data[round_num].append({
+                'winner': winner_display,
+                'loser': loser_display,
+                'score': score,
+                'winner_id': match['winner_id'],
+                'loser_id': match['loser_id'],
+                'is_champion': round_num == max_round and champion and champion['name'] == winner_name
+            })
+    
+    # Criar ASCII art da chave simplificada
+    bracket_lines = []
+    
+    # Cabeçalho com nomes das rodadas
+    header_parts = []
+    for round_num in rounds:
+        round_name = round_names.get(round_num, f"Rodada {round_num}")
+        header_parts.append(f"{round_name:^22}")
+    
+    header = "".join(header_parts)
+    bracket_lines.append(header)
+    bracket_lines.append("=" * len(header))
+    bracket_lines.append("")
+    
+    # Mostrar apenas as partidas únicas de cada rodada
+    max_lines_per_round = max(len(rounds_data[r]) for r in rounds)
+    
+    for match_idx in range(max_lines_per_round):
+        line_parts = []
+        
+        for round_idx, round_num in enumerate(rounds):
+            if match_idx < len(rounds_data[round_num]):
+                match_data = rounds_data[round_num][match_idx]
                 
-                # Obter host da session_state para criar links
-                host = st.session_state.get('host', 'http://localhost:8502')
-                winner_link = f"{host}?page=Análise de Jogadores&player_id={match['winner_id']}"
-                loser_link = f"{host}?page=Análise de Jogadores&player_id={match['loser_id']}"
+                winner = match_data['winner']
+                loser = match_data['loser']
+                score = match_data['score']
                 
-                # Estilizar o card da partida no estilo ATP com links
-                st.markdown(f"""
-                <div style="
-                    border: 2px solid #1f77b4;
-                    border-radius: 12px;
-                    padding: 15px;
-                    margin: 10px 0;
-                    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-                ">
-                    <div style="
-                        font-weight: bold; 
-                        color: #1f77b4; 
-                        font-size: 16px;
-                        margin-bottom: 5px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: space-between;
-                    ">
-                        <span>🏆 {winner_name}</span>
-                        <a href="{winner_link}" target="_self" style="
-                            text-decoration: none;
-                            font-size: 14px;
-                            color: #1f77b4;
-                            background-color: #e3f2fd;
-                            padding: 2px 6px;
-                            border-radius: 4px;
-                            border: 1px solid #1f77b4;
-                            cursor: pointer;
-                        " title="Ver análise do jogador">👤</a>
-                    </div>
-                    <div style="
-                        color: #6c757d; 
-                        font-size: 14px;
-                        margin-bottom: 8px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: space-between;
-                    ">
-                        <span>⚪ {loser_name}</span>
-                        <a href="{loser_link}" target="_self" style="
-                            text-decoration: none;
-                            font-size: 14px;
-                            color: #6c757d;
-                            background-color: #f5f5f5;
-                            padding: 2px 6px;
-                            border-radius: 4px;
-                            border: 1px solid #6c757d;
-                            cursor: pointer;
-                        " title="Ver análise do jogador">👤</a>
-                    </div>
-                    <div style="
-                        font-size: 12px; 
-                        color: #495057; 
-                        background-color: #fff;
-                        padding: 4px 8px;
-                        border-radius: 6px;
-                        text-align: center;
-                        border: 1px solid #dee2e6;
-                    ">
-                        {score}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                if match_data['is_champion']:
+                    winner = f"👑 {winner}"
                 
-                # Adicionar espaçamento entre partidas
-                if j < len(round_matches) - 1:
-                    st.markdown("<br>", unsafe_allow_html=True)
+                # Formattar a partida em blocos sem flechas
+                match_text = f"✅ {winner:<18}\n   {loser:<18}"
+                
+                line_parts.append(match_text)
+            else:
+                # Espaço vazio
+                empty_text = "\n".join([" " * 20] * 2)
+                line_parts.append(empty_text)
+        
+        # Combinar as partes da linha
+        combined_lines = [""] * 2
+        for part in line_parts:
+            part_lines = part.split('\n')
+            for i in range(2):
+                combined_lines[i] += part_lines[i] + "  "
+        
+        # Adicionar as linhas combinadas
+        bracket_lines.extend(combined_lines)
+        bracket_lines.append("")  # Espaçamento entre partidas
+    
+    # Remover linha vazia extra no final
+    if bracket_lines and bracket_lines[-1] == "":
+        bracket_lines.pop()
+    
+    # Exibir a chave ASCII com fonte pequena preservando identação
+    bracket_text = "\n".join(bracket_lines)
+    
+    # Converter quebras de linha para HTML, preservar espaços e escapar caracteres especiais
+    bracket_html = bracket_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    bracket_html = bracket_html.replace(' ', '&nbsp;').replace('\n', '<br>')
+    
+    # Aplicar CSS e exibir
+    st.markdown(f"""
+    <div style="
+        font-family: 'Courier New', monospace;
+        font-size: 10px;
+        line-height: 1.2;
+        background-color: #f8f9fa;
+        padding: 12px;
+        border-radius: 6px;
+        border: 1px solid #e9ecef;
+        overflow-x: auto;
+        white-space: pre-line;
+        color: #212529;
+    ">
+    {bracket_html}
+    </div>
+    """, unsafe_allow_html=True)
+
+    
+    # Mostrar resumo das partidas com cores
+    st.markdown("### 📊 Resumo das Partidas")
+    
+    for round_num in rounds:
+        round_name = round_names.get(round_num, f"Rodada {round_num}")
+        st.markdown(f"**{round_name}:**")
+        
+        round_matches = rounds_data[round_num]
+        for match_data in round_matches:
+            winner = match_data['winner']
+            loser = match_data['loser']
+            
+            if match_data['is_champion']:
+                winner = f"👑 {winner}"
+            
+            # Usar success/error para cores
+            col1, col2 = st.columns(2)
+            with col1:
+                st.success(f"🏆 {winner}")
+            with col2:
+                st.error(f"❌ {loser}")
+        
+        st.divider()
+
 
 def create_bracket_visualization(matches, tournament_id):
     """Cria uma visualização gráfica da chave usando Plotly"""
@@ -311,25 +415,7 @@ def display_tournaments_page(matches, players, tournaments):
                 # Mostrar chave do torneio
                 create_tournament_bracket(matches, tournament_id, tournament_info['name'])
                 
-                # Mostrar estatísticas do torneio
-                with st.expander("📊 Estatísticas do Torneio", expanded=False):
-                    tournament_matches = matches[matches['tournament_id'] == tournament_id]
-                    
-                    col_t1, col_t2, col_t3 = st.columns(3)
-                    with col_t1:
-                        st.metric("Partidas", len(tournament_matches))
-                    with col_t2:
-                        unique_players = pd.concat([
-                            tournament_matches['winner_id'],
-                            tournament_matches['loser_id']
-                        ]).nunique()
-                        st.metric("Participantes", unique_players)
-                    with col_t3:
-                        if not tournament_matches.empty:
-                            rounds = tournament_matches['round'].max()
-                            st.metric("Rodadas", rounds)
-                        else:
-                            st.metric("Rodadas", 0)
+
         else:
             st.info("Nenhum torneio disponível para visualização.")
     else:

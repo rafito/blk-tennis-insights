@@ -125,6 +125,14 @@ def _connect_db() -> sqlite3.Connection | None:
 def display_admin_page():
     st.header('🔐 Admin')
 
+    # Botão de logout se já estiver autenticado
+    if st.session_state.get('admin_authenticated'):
+        col1, col2 = st.columns([0.8, 0.2])
+        with col2:
+            if st.button('🚪 Logout', type='secondary'):
+                st.session_state['admin_authenticated'] = False
+                st.rerun()
+
     configured_password = _get_admin_password()
     if not st.session_state.get('admin_authenticated'):
         st.info('Área restrita. Informe a senha de administrador.')
@@ -138,9 +146,10 @@ def display_admin_page():
             if pwd == configured_password:
                 st.session_state['admin_authenticated'] = True
                 st.success('Autenticado com sucesso!')
+                st.rerun()  # Recarrega a página para mostrar o conteúdo autenticado
             else:
                 st.error('Senha inválida.')
-                return
+        return  # CRÍTICO: Impede acesso ao conteúdo sem autenticação
 
     conn = _connect_db()
     if conn is None:
