@@ -340,46 +340,52 @@ def get_round_name(round_num, tournament_name):
     return f"Rodada {round_num}"
 
 def display_ranking_with_icons(ranking_df, ranking_type="Glicko", matches=None, players=None, tournaments=None, category=None, time_period=None):
-    """Exibe ranking com ícones clicáveis para análise de jogadores"""
+    """Exibe ranking com linhas compactas, nome clicável e tooltip on-hover."""
     if ranking_df.empty:
         return
-    
+
     host = st.session_state.get('host', 'http://localhost:8502')
-    
-    # Criar HTML personalizado para cada linha do ranking
+
+    # CSS para linhas mais compactas e tooltip por hover
+    st.markdown(
+        """
+        <style>
+        .ranking-row { display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--row-border); border-radius:8px; margin:6px 0; position:relative; min-height:32px; }
+        .ranking-pos { width:40px; font-weight:700; text-align:right; }
+        .ranking-name { flex:1; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .ranking-name a { color:inherit; text-decoration:none; }
+        .ranking-name a:hover { text-decoration:underline; }
+        .ranking-stats { font-size:12px; color:#6c757d; min-width:220px; text-align:right; }
+        .ranking-hover { display:none; position:absolute; right:10px; top:36px; background:#ffffff; color:#111; border:1px solid #dee2e6; border-radius:8px; box-shadow:0 6px 24px rgba(0,0,0,0.12); padding:10px; z-index:10; min-width:260px; max-width:420px; }
+        .ranking-row:hover .ranking-hover { display:block; }
+        .ranking-hover h4 { margin:0 0 6px 0; font-size:13px; }
+        .ranking-hover table { width:100%; border-collapse:collapse; font-size:12px; }
+        .ranking-hover td, .ranking-hover th { padding:4px 6px; border-bottom:1px solid #f1f3f5; text-align:left; }
+        .ranking-medal { margin-left:6px; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Renderização de cada linha
     for i, (_, row) in enumerate(ranking_df.iterrows()):
         player_id = row['player_id']
         player_name = row['name']
         position = i + 1
-        
-        # Link para análise do jogador
+
         player_link = f"{host}?page=Análise de Jogadores&player_id={player_id}"
-        
-        # Definir cor de fundo baseada na posição
+
+        # Destaques por posição
         if position <= 3:
-            bg_color = "#fff3cd"  # Dourado para top 3
+            bg_color = "#fff3cd"  # top 3
             border_color = "#ffc107"
         elif position <= 10:
-            bg_color = "#e6f3ff"  # Azul claro para top 10
+            bg_color = "#e6f3ff"  # top 10
             border_color = "#007bff"
         else:
-            bg_color = "#f8f9fa"  # Cinza claro para o resto
+            bg_color = "#f8f9fa"
             border_color = "#dee2e6"
-        
-        # Preparar dados específicos por tipo de ranking
-        if ranking_type == "Glicko":
-            rating = int(row['rating'])
-            rd = int(row['rd'])
-            extra_info = f"Rating: {rating} | RD: {rd}"
-            show_points_button = False
-        else:  # Pontos
-            points = int(row['points'])
-            set_balance = int(row['set_balance'])
-            extra_info = f"Pontos: {points:,} | Saldo: {set_balance:+d}"
-            show_points_button = True
-        
-        # Linha com layout em colunas e ações à direita
-        key_suffix = f"{ranking_type}_{player_id}"
+
         medal = ""
         if position == 1:
             medal = "🥇"
@@ -388,42 +394,50 @@ def display_ranking_with_icons(ranking_df, ranking_type="Glicko", matches=None, 
         elif position == 3:
             medal = "🥉"
 
-        col_pos, col_name, col_stats, col_actions = st.columns([1, 6, 3, 2])
-        with col_pos:
-            st.markdown(f"**{position}º** {medal}")
-        with col_name:
-            st.markdown(f"**{player_name}**")
-        with col_stats:
-            st.caption(extra_info)
-        with col_actions:
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("👤", key=f"profile_{key_suffix}", help="Ver análise do jogador"):
-                    st.query_params["page"] = "Análise de Jogadores"
-                    st.query_params["player_id"] = str(player_id)
-                    st.rerun()
-            with c2:
-                if show_points_button and matches is not None:
-                    with st.popover("📊", use_container_width=False):
-                        st.markdown(f"**{player_name}** — Detalhes dos pontos")
-                        with st.spinner("Carregando..."):
-                            breakdown_df = get_player_points_breakdown(
-                                player_id, matches, players, tournaments, category, time_period
-                            )
-                        if breakdown_df is not None and not breakdown_df.empty:
-                            st.metric("Total", f"{int(breakdown_df['points'].sum()):,} pts")
-                            show_df = breakdown_df.rename(columns={
-                                'tournament': 'Torneio',
-                                'date': 'Data',
-                                'performance': 'Resultado',
-                                'points': 'Pontos'
-                            })[["Torneio","Data","Resultado","Pontos"]]
-                            st.dataframe(show_df, hide_index=True, use_container_width=True)
-                        else:
-                            st.info("Sem pontos no período.")
-        st.divider()
-        
-        # Removido bloco expandido para evitar poluição visual; usando popover acima
+        # Info compacta por tipo
+        if ranking_type == "Glicko":
+            rating = int(row['rating'])
+            rd = int(row['rd'])
+            extra_info = f"Rating: {rating} | RD: {rd}"
+            hover_title = f"{player_name} — Glicko-2"
+            hover_body = f"<div>Rating: <b>{rating}</b><br/>Desvio (RD): <b>{rd}</b></div>"
+        else:
+            points = int(row['points'])
+            set_balance = int(row['set_balance'])
+            extra_info = f"Pontos: {points:,} | Saldo: {set_balance:+d}"
+            hover_title = f"{player_name} — Detalhes dos pontos"
+            # Calcular breakdown para tooltip
+            breakdown_html = "<div>Sem pontos no período.</div>"
+            if matches is not None and players is not None and tournaments is not None:
+                breakdown_df = get_player_points_breakdown(
+                    player_id, matches, players, tournaments, category, time_period
+                )
+                if breakdown_df is not None and not breakdown_df.empty:
+                    total_pts = int(breakdown_df['points'].sum())
+                    top_rows = breakdown_df.head(5).copy()
+                    rows_html = "".join(
+                        f"<tr><td>{r['tournament']}</td><td>{r['date']}</td><td>{r['performance']}</td><td style='text-align:right;'>{int(r['points'])}</td></tr>"
+                        for _, r in top_rows.iterrows()
+                    )
+                    breakdown_html = (
+                        f"<div style='margin-bottom:6px;'>Total: <b>{total_pts:,} pts</b></div>"
+                        f"<table><thead><tr><th>Torneio</th><th>Data</th><th>Resultado</th><th style='text-align:right;'>Pts</th></tr></thead><tbody>{rows_html}</tbody></table>"
+                    )
+            hover_body = breakdown_html
+
+        row_html = f"""
+        <div class='ranking-row' style='--row-border:{border_color}; background:{bg_color};'>
+            <div class='ranking-pos'>{position}º <span class='ranking-medal'>{medal}</span></div>
+            <div class='ranking-name'><a href='{player_link}' target='_self'>{player_name}</a></div>
+            <div class='ranking-stats'>{extra_info}</div>
+            <div class='ranking-hover'>
+                <h4>{hover_title}</h4>
+                {hover_body}
+            </div>
+        </div>
+        """
+
+        st.markdown(row_html, unsafe_allow_html=True)
 
 def display_rankings_page(matches, players, tournaments):
     """Exibe a página de rankings"""
