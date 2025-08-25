@@ -23,50 +23,7 @@ def get_tournament_champion(matches, tournament_id):
     
     return None
 
-def get_participant_seeds(tournament_id):
-    """Busca informações de seed dos participantes do torneio"""
-    try:
-        # Tentar diferentes caminhos para o banco de dados
-        db_paths = [
-            'database.sqlite',
-            'challonge-scraper/database/database.sqlite',
-            '/app/database.sqlite'
-        ]
-        
-        conn = None
-        for path in db_paths:
-            try:
-                conn = sqlite3.connect(path)
-                break
-            except sqlite3.OperationalError:
-                continue
-        
-        if conn is None:
-            return {}
-        
-        # Buscar seeds dos participantes
-        query = """
-        SELECT id, seed, final_rank 
-        FROM challonge_participants 
-        WHERE tournament_id = ?
-        """
-        
-        seeds_df = pd.read_sql_query(query, conn, params=(tournament_id,))
-        conn.close()
-        
-        # Criar dicionário para lookup rápido
-        seeds_dict = {}
-        for _, row in seeds_df.iterrows():
-            if pd.notna(row['seed']) and row['seed'] is not None:
-                seeds_dict[row['id']] = {
-                    'seed': row['seed'],
-                    'final_rank': row['final_rank']
-                }
-        
-        return seeds_dict
-    except Exception as e:
-        print(f"Erro ao buscar seeds: {e}")
-        return {}
+# Removido: função get_participant_seeds (informação de seeds não confiável)
 
 def create_tournament_bracket(matches, tournament_id, tournament_name):
     """Cria a visualização da chave do torneio em ASCII"""
@@ -76,8 +33,7 @@ def create_tournament_bracket(matches, tournament_id, tournament_name):
         st.warning(f"Nenhuma partida encontrada para o torneio {tournament_name}")
         return
     
-    # Buscar informações de seed dos participantes
-    participant_seeds = get_participant_seeds(tournament_id)
+    # Removido: busca de seeds (informação não confiável)
     
     # Organizar partidas por rodada
     rounds = sorted(tournament_matches['round'].unique())
@@ -120,16 +76,11 @@ def create_tournament_bracket(matches, tournament_id, tournament_name):
             loser_name = match['loser_name']
             score = match['score'] if pd.notna(match['score']) else "A definir"
             
-            # Buscar seeds
-            winner_seed_info = participant_seeds.get(match['winner_id'], {})
-            loser_seed_info = participant_seeds.get(match['loser_id'], {})
+            # Removido: busca de seeds (informação não confiável)
             
-            winner_seed = winner_seed_info.get('seed')
-            loser_seed = loser_seed_info.get('seed')
-            
-            # Formattar nomes com seed em CAPS LOCK
-            winner_display = f"#{winner_seed} {winner_name.upper()}" if winner_seed else winner_name.upper()
-            loser_display = f"#{loser_seed} {loser_name.upper()}" if loser_seed else loser_name.upper()
+            # Formattar nomes em CAPS LOCK (sem seed)
+            winner_display = winner_name.upper()
+            loser_display = loser_name.upper()
             
             # Truncar nomes se muito longos
             if len(winner_display) > 18:
