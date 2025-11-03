@@ -91,7 +91,7 @@ class ChallongeSyncCommand extends Command
             
             $category = $this->determineCategory($tournament['name']);
             
-            ChallongeTournament::updateOrCreate(
+            $createdOrUpdated = ChallongeTournament::updateOrCreate(
                 ['challonge_id' => $tournament['id']],
                 [
                     'name' => $tournament['name'],
@@ -105,11 +105,16 @@ class ChallongeSyncCommand extends Command
                     'hold_third_place_match' => $tournament['hold_third_place_match'],
                     'participants_count' => $tournament['participants_count'],
                     'description' => $tournament['description'],
-                    'raw_data' => $tournament,
-                    'synced' => false,
-                    'last_sync_at' => null
+                    'raw_data' => $tournament
                 ]
             );
+
+            // Apenas torneios recém-criados devem começar como não sincronizados
+            if ($createdOrUpdated->wasRecentlyCreated) {
+                $createdOrUpdated->synced = false;
+                $createdOrUpdated->last_sync_at = null;
+                $createdOrUpdated->save();
+            }
         }
     }
 

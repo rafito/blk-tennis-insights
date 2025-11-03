@@ -47,7 +47,43 @@ class ChallongeMergeParticipantsCommand extends Command
         $str = preg_replace('/\s+/', ' ', $str); // Converte múltiplos espaços em um
         $str = str_replace(['. ', '.'], ' ', $str); // Converte pontos em espaços
         $str = trim($str); // Remove espaços das extremidades
+        // Remove acentos e normaliza para minúsculas
+        $str = Str::ascii($str);
         return Str::lower($str); // Converte para minúsculas
+    }
+
+    private function normalizeToAsciiLower(string $str): string
+    {
+        // Remove acentos, pontuação (mantém letras/números/espaços) e normaliza espaços
+        $str = Str::ascii($str);
+        $str = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $str);
+        $str = preg_replace('/\s+/', ' ', $str);
+        $str = trim($str);
+        return Str::lower($str);
+    }
+
+    private function extractSurname(string $name): ?string
+    {
+        $normalized = $this->normalizeToAsciiLower($name);
+        $tokens = array_values(array_filter(explode(' ', $normalized)));
+        if (empty($tokens)) {
+            return null;
+        }
+
+        // Remove partículas comuns de sobrenome em PT-BR
+        $stopwords = ['da', 'de', 'do', 'das', 'dos', 'e'];
+        $filtered = [];
+        foreach ($tokens as $token) {
+            if (!in_array($token, $stopwords, true)) {
+                $filtered[] = $token;
+            }
+        }
+
+        if (empty($filtered)) {
+            return null;
+        }
+
+        return $filtered[count($filtered) - 1];
     }
 
     private function areNamesEffectivelyIdentical(string $str1, string $str2): bool
@@ -76,6 +112,14 @@ class ChallongeMergeParticipantsCommand extends Command
         // Se as strings são idênticas após normalização básica
         if ($str1 === $str2) {
             return 100;
+        }
+
+        // Regra forte: exige coincidência exata de sobrenome após normalização
+        $surname1 = $this->extractSurname($str1);
+        $surname2 = $this->extractSurname($str2);
+        if ($surname1 !== null && $surname2 !== null && $surname1 !== $surname2) {
+            // Sobrenomes diferentes: não considerar como similares para mesclagem
+            return 0.0;
         }
 
         // Penaliza se a primeira letra for diferente
