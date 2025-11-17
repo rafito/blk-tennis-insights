@@ -90,6 +90,8 @@ class ChallongeSyncCommand extends Command
             $this->info("Sincronizando torneio: {$tournament['name']} (ID: {$tournament['id']})");
             
             $category = $this->determineCategory($tournament['name']);
+            $startedAt = $this->adjustDateYear($tournament['started_at'], $tournament['name']);
+            $completedAt = $this->adjustDateYear($tournament['completed_at'], $tournament['name']);
             
             $createdOrUpdated = ChallongeTournament::updateOrCreate(
                 ['challonge_id' => $tournament['id']],
@@ -99,8 +101,8 @@ class ChallongeSyncCommand extends Command
                     'url' => $tournament['url'],
                     'tournament_type' => $tournament['tournament_type'],
                     'state' => $tournament['state'],
-                    'started_at' => $tournament['started_at'],
-                    'completed_at' => $tournament['completed_at'],
+                    'started_at' => $startedAt,
+                    'completed_at' => $completedAt,
                     'open_signup' => $tournament['open_signup'],
                     'hold_third_place_match' => $tournament['hold_third_place_match'],
                     'participants_count' => $tournament['participants_count'],
@@ -116,6 +118,44 @@ class ChallongeSyncCommand extends Command
                 $createdOrUpdated->save();
             }
         }
+    }
+
+    private function adjustDateYear(?string $dateValue, string $name)
+    {
+        if (!$dateValue) {
+            return null;
+        }
+
+        try {
+            $date = Carbon::parse($dateValue);
+        } catch (\Exception $e) {
+            return $dateValue;
+        }
+
+        $yearFromName = $this->extractYearFromName($name);
+
+        if ($yearFromName && $date->year !== $yearFromName) {
+            $date = $date->setYear($yearFromName);
+        }
+
+        return $date;
+    }
+
+    private function extractYearFromName(string $name): ?int
+    {
+        if (preg_match('/\b(20\d{2})\b/', $name, $matches)) {
+            return (int) $matches[1];
+        }
+
+        if (preg_match('/\b(\d{2})\b/', $name, $matches)) {
+            $twoDigitYear = (int) $matches[1];
+
+            if ($twoDigitYear >= 20) {
+                return 2000 + $twoDigitYear;
+            }
+        }
+
+        return null;
     }
 
     private function determineCategory(string $name): string

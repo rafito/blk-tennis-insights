@@ -117,9 +117,20 @@ class ChallongeMergeParticipantsCommand extends Command
         // Regra forte: exige coincidência exata de sobrenome após normalização
         $surname1 = $this->extractSurname($str1);
         $surname2 = $this->extractSurname($str2);
-        if ($surname1 !== null && $surname2 !== null && $surname1 !== $surname2) {
-            // Sobrenomes diferentes: não considerar como similares para mesclagem
-            return 0.0;
+        if ($surname1 !== null && $surname2 !== null) {
+            if ($surname1 !== $surname2) {
+                $surnameDistance = levenshtein($surname1, $surname2);
+                $maxSurnameLength = max(strlen($surname1), strlen($surname2));
+                if ($maxSurnameLength === 0) {
+                    return 0.0;
+                }
+                $surnameSimilarity = (1 - ($surnameDistance / $maxSurnameLength)) * 100;
+
+                if ($surnameSimilarity < 75) {
+                    // Sobrenomes muito diferentes: não considerar como similares para mesclagem
+                    return 0.0;
+                }
+            }
         }
 
         // Penaliza se a primeira letra for diferente

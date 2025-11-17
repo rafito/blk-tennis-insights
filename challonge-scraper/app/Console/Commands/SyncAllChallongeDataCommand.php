@@ -37,6 +37,7 @@ class SyncAllChallongeDataCommand extends Command
         // Executa challonge:merge-participants
         $this->info('Executando challonge:merge-participants...');
         $this->call('challonge:merge-participants');
+        $this->call('challonge:merge-participants --exact-only');
         $this->info('challonge:merge-participants concluído.');
 
         $this->info('Sincronização completa concluída com sucesso!');
