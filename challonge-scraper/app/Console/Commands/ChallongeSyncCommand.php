@@ -107,6 +107,12 @@ class ChallongeSyncCommand extends Command
             $category = $this->determineCategory($tournament['name']);
             $startedAt = $this->adjustDateYear($tournament['started_at'], $tournament['name']);
             $completedAt = $this->adjustDateYear($tournament['completed_at'], $tournament['name']);
+            $tournamentYear = $this->resolveTournamentYear($startedAt, $completedAt, $tournament['name']);
+
+            if ($tournamentYear !== null && $tournamentYear < 2022) {
+                $this->info("Ignorando torneio por ser anterior a 2022: {$tournament['name']} (ano {$tournamentYear})");
+                continue;
+            }
             
             $createdOrUpdated = ChallongeTournament::updateOrCreate(
                 ['challonge_id' => $tournament['id']],
@@ -216,6 +222,30 @@ class ChallongeSyncCommand extends Command
         }
         
         return '3a CLASSE'; // Categoria padrão caso não encontre nenhuma correspondência
+    }
+
+    private function resolveTournamentYear($startedAt, $completedAt, string $name): ?int
+    {
+        return $this->extractYearFromDateValue($startedAt)
+            ?? $this->extractYearFromDateValue($completedAt)
+            ?? $this->extractYearFromName($name);
+    }
+
+    private function extractYearFromDateValue($dateValue): ?int
+    {
+        if ($dateValue instanceof Carbon) {
+            return $dateValue->year;
+        }
+
+        if (is_string($dateValue)) {
+            try {
+                return Carbon::parse($dateValue)->year;
+            } catch (\Exception $e) {
+                return null;
+            }
+        }
+
+        return null;
     }
 
     private function syncParticipants($tournament)
