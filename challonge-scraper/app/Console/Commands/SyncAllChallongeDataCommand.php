@@ -18,6 +18,23 @@ class SyncAllChallongeDataCommand extends Command
         if ($this->option('reset-db')) {
             $this->info('Resetando o banco de dados...');
             
+            // Força recriação do arquivo SQLite antes de migrar
+            DB::disconnect();
+            $dbPath = config('database.connections.sqlite.database');
+            if ($dbPath && $dbPath !== ':memory:') {
+                $this->info("Recriando arquivo do banco em: {$dbPath}");
+                if (file_exists($dbPath)) {
+                    @unlink($dbPath);
+                }
+                $dir = dirname($dbPath);
+                if (!is_dir($dir)) {
+                    @mkdir($dir, 0777, true);
+                }
+                @touch($dbPath);
+            } else {
+                $this->warn('Conexão SQLite em memória detectada; pulando recriação de arquivo.');
+            }
+            
             // Executa as migrações para garantir que as tabelas existam
             $this->info('Executando migrações...');
             Artisan::call('migrate:fresh');
@@ -36,8 +53,8 @@ class SyncAllChallongeDataCommand extends Command
 
         // Executa challonge:merge-participants
         $this->info('Executando challonge:merge-participants...');
+        $this->call('challonge:merge-participants', ['--exact-only' => 1]);
         $this->call('challonge:merge-participants');
-        $this->call('challonge:merge-participants --exact-only');
         $this->info('challonge:merge-participants concluído.');
 
         $this->info('Sincronização completa concluída com sucesso!');

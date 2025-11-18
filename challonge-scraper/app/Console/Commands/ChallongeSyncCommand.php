@@ -67,8 +67,23 @@ class ChallongeSyncCommand extends Command
 
     private function syncTournaments()
     {
-        $response = Http::withBasicAuth($this->username, $this->apiKey)
-            ->get("{$this->baseUrl}/tournaments.json");
+		$attempts = 3;
+		$delaySeconds = 2;
+		$response = null;
+
+		for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+			$response = Http::withBasicAuth($this->username, $this->apiKey)
+				->get("{$this->baseUrl}/tournaments.json");
+
+			if ($response->successful()) {
+				break;
+			}
+
+			if ($attempt < $attempts) {
+				$this->warn("Falha ao obter torneios (tentativa {$attempt}/{$attempts}, status {$response->status()}). Retentando em {$delaySeconds}s...");
+				sleep($delaySeconds);
+			}
+		}
 
         if (!$response->successful()) {
             throw new \Exception("Falha ao obter torneios: " . $response->body());
@@ -205,8 +220,23 @@ class ChallongeSyncCommand extends Command
 
     private function syncParticipants($tournament)
     {
-        $response = Http::withBasicAuth($this->username, $this->apiKey)
-            ->get("{$this->baseUrl}/tournaments/{$tournament->challonge_id}/participants.json");
+		$attempts = 3;
+		$delaySeconds = 2;
+		$response = null;
+
+		for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+			$response = Http::withBasicAuth($this->username, $this->apiKey)
+				->get("{$this->baseUrl}/tournaments/{$tournament->challonge_id}/participants.json");
+
+			if ($response->successful()) {
+				break;
+			}
+
+			if ($attempt < $attempts) {
+				$this->warn("Falha ao obter participantes do torneio {$tournament->id} (tentativa {$attempt}/{$attempts}, status {$response->status()}). Retentando em {$delaySeconds}s...");
+				sleep($delaySeconds);
+			}
+		}
 
         if (!$response->successful()) {
             throw new \Exception("Falha ao obter participantes do torneio {$tournament->id}: " . $response->body());
@@ -247,10 +277,25 @@ class ChallongeSyncCommand extends Command
 
     private function syncMatches($tournament)
     {
-        $response = Http::withBasicAuth($this->username, $this->apiKey)
-            ->get("{$this->baseUrl}/tournaments/{$tournament->challonge_id}/matches.json");
+		$attempts = 3;
+		$delaySeconds = 2;
+		$response = null;
 
-        if (!$response->successful()) {
+		for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+			$response = Http::withBasicAuth($this->username, $this->apiKey)
+				->get("{$this->baseUrl}/tournaments/{$tournament->challonge_id}/matches.json");
+
+			if ($response->successful()) {
+				break;
+			}
+
+			if ($attempt < $attempts) {
+				$this->warn("Falha ao obter partidas do torneio {$tournament->id} (tentativa {$attempt}/{$attempts}, status {$response->status()}). Retentando em {$delaySeconds}s...");
+				sleep($delaySeconds);
+			}
+		}
+
+		if (!$response || !$response->successful()) {
             throw new \Exception("Falha ao obter partidas do torneio {$tournament->id}: " . $response->body());
         }
 
