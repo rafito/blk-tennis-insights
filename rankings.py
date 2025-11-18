@@ -6,6 +6,35 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from glicko import GlickoSystem
 
+
+def filter_dataframe_by_period(df, column_name, time_period):
+    """Filtra um DataFrame pelo período selecionado."""
+    if not time_period:
+        return df
+
+    if isinstance(time_period, tuple):
+        start_date, end_date = time_period
+        if start_date is None and end_date is None:
+            return df
+    else:
+        start_date, end_date = time_period, None
+
+    if isinstance(start_date, str):
+        start_date = pd.to_datetime(start_date)
+    if isinstance(end_date, str):
+        end_date = pd.to_datetime(end_date)
+
+    dates = pd.to_datetime(df[column_name], format='%m/%Y')
+    mask = pd.Series(True, index=df.index)
+
+    if start_date is not None:
+        mask &= dates >= start_date
+    if end_date is not None:
+        mask &= dates <= end_date
+
+    return df.loc[mask]
+
+
 @st.cache_data
 def calculate_glicko_ratings(matches, players, tournaments, category=None, time_period=None):
     """Calcula ratings Glicko-2 para os jogadores"""
@@ -16,13 +45,9 @@ def calculate_glicko_ratings(matches, players, tournaments, category=None, time_
         tournament_ids = tournaments[tournaments['category'] == category]['id'].tolist()
         filtered_matches = filtered_matches[filtered_matches['tournament_id'].isin(tournament_ids)]
     
-    if time_period:
-        # Converter o período para datetime se for string
-        if isinstance(time_period, str):
-            time_period = pd.to_datetime(time_period)
-        filtered_matches = filtered_matches[
-            pd.to_datetime(filtered_matches['started_month_year'], format='%m/%Y') >= time_period
-        ]
+    filtered_matches = filter_dataframe_by_period(
+        filtered_matches, 'started_month_year', time_period
+    )
     
     # Obter lista de jogadores ativos no período
     active_players = pd.concat([
@@ -70,12 +95,9 @@ def calculate_points_ranking(matches, players, tournaments, category=None, time_
         tournament_ids = tournaments[tournaments['category'] == category]['id'].tolist()
         filtered_matches = filtered_matches[filtered_matches['tournament_id'].isin(tournament_ids)]
     
-    if time_period:
-        if isinstance(time_period, str):
-            time_period = pd.to_datetime(time_period)
-        filtered_matches = filtered_matches[
-            pd.to_datetime(filtered_matches['started_month_year'], format='%m/%Y') >= time_period
-        ]
+    filtered_matches = filter_dataframe_by_period(
+        filtered_matches, 'started_month_year', time_period
+    )
     
     def get_points_for_round(row, is_champion=False):
         if pd.isna(row['round']) or pd.isna(row['tournament_name']):
@@ -206,12 +228,9 @@ def get_player_points_breakdown(player_id, matches, players, tournaments, catego
         tournament_ids = tournaments[tournaments['category'] == category]['id'].tolist()
         filtered_matches = filtered_matches[filtered_matches['tournament_id'].isin(tournament_ids)]
     
-    if time_period:
-        if isinstance(time_period, str):
-            time_period = pd.to_datetime(time_period)
-        filtered_matches = filtered_matches[
-            pd.to_datetime(filtered_matches['started_month_year'], format='%m/%Y') >= time_period
-        ]
+    filtered_matches = filter_dataframe_by_period(
+        filtered_matches, 'started_month_year', time_period
+    )
     
     # Filtrar partidas onde o jogador participou
     player_matches = filtered_matches[
@@ -486,10 +505,32 @@ def display_rankings_page(matches, players, tournaments):
             index=default_index
         )
     with col2:
-        time_period = st.selectbox(
+        base_period_options = [
+            "Todo o histórico",
+            "Somente este ano",
+            "Últimos 12 meses",
+            "Últimos 24 meses",
+        ]
+        unique_years = (
+            tournaments['started_month_year']
+            .dropna()
+            .astype(str)
+            .str[-4:]
+        )
+        year_options = sorted(
+            {int(year) for year in unique_years if year.isdigit()},
+            reverse=True
+        )
+        period_options = base_period_options + [f"Ranking {year}" for year in year_options]
+        default_period_index = (
+            period_options.index("Somente este ano")
+            if "Somente este ano" in period_options
+            else 0
+        )
+        selected_period = st.selectbox(
             "Período:",
-            ["Todo o histórico", "Somente este ano", "Últimos 12 meses", "Últimos 24 meses"],
-            index=2  # Define "Últimos 12 meses" como padrão (índice 2 na lista)
+            period_options,
+            index=default_period_index
         )
     
     # Só mostra os rankings se uma categoria for selecionada
@@ -497,13 +538,30 @@ def display_rankings_page(matches, players, tournaments):
         st.warning("⚠️ Por favor, selecione uma categoria para visualizar os rankings")
         return
     
-    # Converter período para data se necessário
-    if time_period == "Últimos 12 meses":
-        time_period = pd.Timestamp.now() - pd.DateOffset(months=12)
-    elif time_period == "Últimos 24 meses":
-        time_period = pd.Timestamp.now() - pd.DateOffset(months=24)
-    elif time_period == "Somente este ano":
-        time_period = pd.Timestamp(f"{pd.Timestamp.now().year}-01-01")
+    now = pd.Timestamp.now().normalize()
+    filter_start = None
+    filter_end = None
+
+    if selected_period == "Últimos 12 meses":
+        filter_start = now - pd.DateOffset(months=12)
+        filter_end = now
+    elif selected_period == "Últimos 24 meses":
+        filter_start = now - pd.DateOffset(months=24)
+        filter_end = now
+    elif selected_period == "Somente este ano":
+        filter_start = pd.Timestamp(f"{now.year}-01-01")
+        filter_end = pd.Timestamp(f"{now.year}-12-31")
+    elif selected_period.startswith("Ranking "):
+        try:
+            year = int(selected_period.split(" ")[1])
+            filter_start = pd.Timestamp(f"{year}-01-01")
+            filter_end = pd.Timestamp(f"{year}-12-31")
+        except (ValueError, IndexError):
+            filter_start = None
+            filter_end = None
+
+    if filter_start is not None or filter_end is not None:
+        time_period = (filter_start, filter_end)
     else:
         time_period = None
     
@@ -515,15 +573,9 @@ def display_rankings_page(matches, players, tournaments):
         if category != "Todas":
             filtered_tournaments = filtered_tournaments[filtered_tournaments['category'] == category]
         
-        if time_period:
-            # Converter started_month_year para datetime para comparação
-            filtered_tournaments['started_date'] = pd.to_datetime(
-                filtered_tournaments['started_month_year'], 
-                format='%m/%Y'
-            )
-            filtered_tournaments = filtered_tournaments[
-                filtered_tournaments['started_date'] >= time_period
-            ]
+        filtered_tournaments = filter_dataframe_by_period(
+            filtered_tournaments, 'started_month_year', time_period
+        )
         
         # Filtrar partidas para mostrar estatísticas
         filtered_matches = matches.copy()
@@ -531,10 +583,9 @@ def display_rankings_page(matches, players, tournaments):
             tournament_ids = filtered_tournaments['id'].tolist()
             filtered_matches = filtered_matches[filtered_matches['tournament_id'].isin(tournament_ids)]
         
-        if time_period:
-            filtered_matches = filtered_matches[
-                pd.to_datetime(filtered_matches['started_month_year'], format='%m/%Y') >= time_period
-            ]
+        filtered_matches = filter_dataframe_by_period(
+            filtered_matches, 'started_month_year', time_period
+        )
         
         # Mostrar estatísticas
         col_stats1, col_stats2, col_stats3 = st.columns(3)
@@ -568,7 +619,16 @@ def display_rankings_page(matches, players, tournaments):
     
     # Debug: Mostrar informações sobre o filtro de período
     if time_period:
-        st.info(f"📅 Filtrando dados a partir de: {time_period.strftime('%d/%m/%Y')}")
+        start_date, end_date = time_period
+        if start_date is not None and end_date is not None:
+            st.info(
+                f"📅 Filtrando dados entre: {start_date.strftime('%d/%m/%Y')} "
+                f"e {end_date.strftime('%d/%m/%Y')}"
+            )
+        elif start_date is not None:
+            st.info(f"📅 Filtrando dados a partir de: {start_date.strftime('%d/%m/%Y')}")
+        elif end_date is not None:
+            st.info(f"📅 Filtrando dados até: {end_date.strftime('%d/%m/%Y')}")
     
     # Calcular rankings
     with st.spinner('Calculando rankings...'):
@@ -585,34 +645,9 @@ def display_rankings_page(matches, players, tournaments):
         )
     
     # Exibir rankings
-    tab1, tab2 = st.tabs(["Ranking Glicko-2", "Ranking por Pontos"])
+    tab_pontos, tab_glicko = st.tabs(["Ranking por Pontos", "Ranking Glicko-2"])
     
-    with tab1:
-        st.subheader("Ranking Glicko-2")
-        
-        # Substituir card de info por expander
-        with st.expander("ℹ️ Como funciona o Ranking Glicko-2?"):
-            st.write("""
-            O ranking Glicko-2 é um sistema sofisticado que considera:
-            - Resultado das partidas (vitória/derrota)
-            - Força dos adversários enfrentados
-            - Frequência de jogos (quanto mais jogos, mais preciso o rating)
-            - Desvio padrão (quanto menor, mais confiável é o rating)
-            
-            O rating base é 1500, com desvio padrão inicial de 350.
-            Quanto maior o rating, melhor a performance do jogador.
-            """)
-        
-        if not glicko_ratings.empty:
-            with st.spinner('Preparando ranking Glicko-2...'):
-                display_ranking_with_icons(
-                    glicko_ratings, "Glicko", 
-                    matches, players, tournaments, category, time_period
-                )
-        else:
-            st.info("Não há dados suficientes para gerar o ranking Glicko-2 neste período.")
-    
-    with tab2:
+    with tab_pontos:
         st.subheader("Ranking por Pontos")
         
         # Substituir card de info por expander
@@ -644,3 +679,28 @@ def display_rankings_page(matches, players, tournaments):
                 )
         else:
             st.info("Não há dados suficientes para gerar o ranking por pontos neste período.") 
+
+    with tab_glicko:
+        st.subheader("Ranking Glicko-2")
+        
+        # Substituir card de info por expander
+        with st.expander("ℹ️ Como funciona o Ranking Glicko-2?"):
+            st.write("""
+            O ranking Glicko-2 é um sistema sofisticado que considera:
+            - Resultado das partidas (vitória/derrota)
+            - Força dos adversários enfrentados
+            - Frequência de jogos (quanto mais jogos, mais preciso o rating)
+            - Desvio padrão (quanto menor, mais confiável é o rating)
+            
+            O rating base é 1500, com desvio padrão inicial de 350.
+            Quanto maior o rating, melhor a performance do jogador.
+            """)
+        
+        if not glicko_ratings.empty:
+            with st.spinner('Preparando ranking Glicko-2...'):
+                display_ranking_with_icons(
+                    glicko_ratings, "Glicko", 
+                    matches, players, tournaments, category, time_period
+                )
+        else:
+            st.info("Não há dados suficientes para gerar o ranking Glicko-2 neste período.")
