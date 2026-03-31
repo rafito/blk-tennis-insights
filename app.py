@@ -9,6 +9,7 @@ from tournaments import display_tournaments_page
 import tracemalloc
 import warnings
 import asyncio
+import io
 import os
 
 # Inicializar tracemalloc
@@ -41,13 +42,18 @@ def get_query_params():
 @st.cache_data
 def load_data():
     with st.spinner('Carregando dados do banco...'):
-        # Tenta diferentes caminhos possíveis para o banco de dados
-        db_paths = [
-            'database.sqlite',
-            'challonge-scraper/database/database.sqlite',
-            '/app/database.sqlite'  # Caminho no Streamlit Cloud
-        ]
-        
+        try:
+            from challonge_sync.db import init_schema_if_needed
+            init_schema_if_needed()
+        except Exception as e:
+            st.warning(f"Bootstrap do schema: {e}")
+
+        db_paths = []
+        env_path = os.environ.get("BLK_SQLITE_PATH")
+        if env_path:
+            db_paths.append(env_path)
+        db_paths.extend(["database.sqlite", "/app/database.sqlite"])
+
         conn = None
         chosen_path = None
         for path in db_paths:
@@ -57,42 +63,55 @@ def load_data():
                 break
             except sqlite3.OperationalError:
                 continue
-        
+
         if conn is None:
-            st.error("Não foi possível conectar ao banco de dados. Verifique se o arquivo database.sqlite está no local correto.")
+            st.error(
+                "Não foi possível conectar ao banco de dados. "
+                "Defina BLK_SQLITE_PATH ou coloque database.sqlite na raiz do projeto."
+            )
             return None, None, None
-        
-        # Guardar o caminho do banco para uso na página Admin
-        st.session_state['db_path'] = chosen_path
-            
-        matches = pd.read_sql_query("SELECT * FROM matches", conn)
-        players = pd.read_sql_query("SELECT * FROM players", conn)
-        tournaments = pd.read_sql_query("SELECT * FROM tournaments", conn)
+
+        st.session_state["db_path"] = chosen_path
+
+        try:
+            matches = pd.read_sql_query("SELECT * FROM matches", conn)
+            players = pd.read_sql_query("SELECT * FROM players", conn)
+            tournaments = pd.read_sql_query("SELECT * FROM tournaments", conn)
+        except Exception as e:
+            conn.close()
+            st.error(f"Erro ao ler views do banco (rode a sincronização ou verifique o schema): {e}")
+            return None, None, None
         conn.close()
-        
-        # Debug: Imprimir colunas das tabelas
+
         print("\nColunas em matches:", matches.columns.tolist())
         print("\nColunas em tournaments:", tournaments.columns.tolist())
         print("\nColunas em players:", players.columns.tolist())
-        
-        # Adiciona a data do torneio às partidas
-        if 'start_date' in tournaments.columns:
+
+        if "start_date" in tournaments.columns:
             matches = matches.merge(
-                tournaments[['id', 'start_date']],
-                left_on='tournament_id',
-                right_on='id',
-                suffixes=('', '_tournament')
+                tournaments[["id", "start_date"]],
+                left_on="tournament_id",
+                right_on="id",
+                suffixes=("", "_tournament"),
             )
-            matches = matches.rename(columns={'start_date': 'tournament_date'})
-        elif 'created_at' in tournaments.columns:
+            matches = matches.rename(columns={"start_date": "tournament_date"})
+        elif "created_at" in tournaments.columns:
             matches = matches.merge(
-                tournaments[['id', 'created_at']],
-                left_on='tournament_id',
-                right_on='id',
-                suffixes=('', '_tournament')
+                tournaments[["id", "created_at"]],
+                left_on="tournament_id",
+                right_on="id",
+                suffixes=("", "_tournament"),
             )
-            matches = matches.rename(columns={'created_at': 'tournament_date'})
-        
+            matches = matches.rename(columns={"created_at": "tournament_date"})
+        elif "started_at" in tournaments.columns:
+            matches = matches.merge(
+                tournaments[["id", "started_at"]],
+                left_on="tournament_id",
+                right_on="id",
+                suffixes=("", "_tournament"),
+            )
+            matches = matches.rename(columns={"started_at": "tournament_date"})
+
         return matches, players, tournaments
 
 # ===== Helpers/Admin =====
@@ -106,13 +125,16 @@ def _get_admin_password() -> str | None:
     return secret_pwd or env_pwd
 
 def _connect_db() -> sqlite3.Connection | None:
-    db_path = st.session_state.get('db_path')
+    db_path = st.session_state.get("db_path")
     if not db_path:
-        # fallback tenta os mesmos caminhos do load_data
-        for path in ['database.sqlite', 'challonge-scraper/database/database.sqlite', '/app/database.sqlite']:
+        paths = []
+        if os.environ.get("BLK_SQLITE_PATH"):
+            paths.append(os.environ["BLK_SQLITE_PATH"])
+        paths.extend(["database.sqlite", "/app/database.sqlite"])
+        for path in paths:
             try:
                 conn = sqlite3.connect(path)
-                st.session_state['db_path'] = path
+                st.session_state["db_path"] = path
                 return conn
             except sqlite3.OperationalError:
                 continue
@@ -121,6 +143,15 @@ def _connect_db() -> sqlite3.Connection | None:
         return sqlite3.connect(db_path)
     except sqlite3.OperationalError:
         return None
+
+
+def _get_challonge_credentials() -> tuple[str | None, str | None]:
+    try:
+        u = st.secrets.get("CHALLONGE_USERNAME")  # type: ignore[attr-defined]
+        k = st.secrets.get("CHALLONGE_API_KEY")  # type: ignore[attr-defined]
+    except Exception:
+        u, k = None, None
+    return (u or os.environ.get("CHALLONGE_USERNAME"), k or os.environ.get("CHALLONGE_API_KEY"))
 
 def display_admin_page():
     st.header('🔐 Admin')
@@ -157,7 +188,7 @@ def display_admin_page():
         return
 
     with conn:
-        tabs = st.tabs(['🧑‍💼 Jogadores', '🏟️ Torneios'])
+        tabs = st.tabs(["🧑‍💼 Jogadores", "🏟️ Torneios", "🔄 Sincronização Challonge"])
 
         # ----- Jogadores (challonge_participants) -----
         with tabs[0]:
@@ -281,8 +312,87 @@ def display_admin_page():
                 except Exception as e:
                     st.error(f'Erro ao atualizar torneio: {e}')
 
+        # ----- Sincronização Challonge (Python) -----
+        with tabs[2]:
+            if st.session_state.pop("admin_sync_success", False):
+                st.success("Sincronização concluída com sucesso.")
+            err_msg = st.session_state.pop("admin_sync_error", None)
+            if err_msg:
+                st.error(err_msg)
+
+            st.subheader("Sincronização com a API Challonge")
+            st.caption(
+                "Credenciais: CHALLONGE_USERNAME e CHALLONGE_API_KEY em st.secrets ou variáveis de ambiente."
+            )
+            cu, ck = _get_challonge_credentials()
+            if not cu or not ck:
+                st.error(
+                    "Configure CHALLONGE_USERNAME e CHALLONGE_API_KEY (secrets ou env) para sincronizar."
+                )
+            else:
+                st.success("Credenciais Challonge detectadas.")
+
+            log_box = st.empty()
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                btn_inc = st.button("Sincronizar (incremental)", key="sync_inc", disabled=not (cu and ck))
+            with col_b:
+                btn_force = st.button("Sincronizar tudo (force)", key="sync_force", disabled=not (cu and ck))
+            with col_c:
+                confirm_reset = st.checkbox(
+                    "Confirmo apagar o SQLite e recriar do zero",
+                    key="sync_reset_confirm",
+                )
+                btn_reset = st.button(
+                    "Reset DB + sync completo",
+                    key="sync_reset",
+                    disabled=not (cu and ck) or not confirm_reset,
+                    type="primary",
+                )
+
+            def _run_sync(force: bool, reset_db: bool) -> None:
+                from challonge_sync.pipeline import run_pipeline
+
+                buf = io.StringIO()
+
+                def _log(msg: str) -> None:
+                    buf.write(msg + "\n")
+                    log_box.code(buf.getvalue(), language="text")
+
+                run_pipeline(
+                    username=cu or "",
+                    api_key=ck or "",
+                    force=force,
+                    reset_db=reset_db,
+                    log=_log,
+                )
+                st.cache_data.clear()
+                st.session_state["admin_sync_success"] = True
+
+            if btn_inc and cu and ck:
+                try:
+                    _run_sync(force=False, reset_db=False)
+                except Exception as e:
+                    st.session_state["admin_sync_error"] = str(e)
+                st.rerun()
+            if btn_force and cu and ck:
+                try:
+                    _run_sync(force=True, reset_db=False)
+                except Exception as e:
+                    st.session_state["admin_sync_error"] = str(e)
+                st.rerun()
+            if btn_reset and cu and ck and confirm_reset:
+                try:
+                    _run_sync(force=True, reset_db=True)
+                except Exception as e:
+                    st.session_state["admin_sync_error"] = str(e)
+                st.rerun()
+
 # Carregar dados
 matches, players, tournaments = load_data()
+
+if matches is None:
+    st.stop()
 
 # Debug temporário
 print("Colunas disponíveis em matches:", matches.columns.tolist())

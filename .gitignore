@@ -36,4 +36,11 @@ ENV/
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Dados locais
+database.sqlite
+merge_decisions.json
+
+# Pasta legada Laravel (removida do repositório)
+challonge-scraper/ 
