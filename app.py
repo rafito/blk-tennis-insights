@@ -188,7 +188,14 @@ def display_admin_page():
         return
 
     with conn:
-        tabs = st.tabs(["🧑‍💼 Jogadores", "🏟️ Torneios", "🔄 Sincronização Challonge"])
+        tabs = st.tabs(
+            [
+                "🧑‍💼 Jogadores",
+                "🏟️ Torneios",
+                "🔄 Sincronização Challonge",
+                "🔗 Mesclar jogadores",
+            ]
+        )
 
         # ----- Jogadores (challonge_participants) -----
         with tabs[0]:
@@ -259,58 +266,56 @@ def display_admin_page():
             st.dataframe(df_tourn, use_container_width=True)
 
             if df_tourn.empty:
-                st.info('Nenhum torneio encontrado.')
-                return
-            
-            selected_tid = st.selectbox(
-                'Selecionar torneio pelo ID',
-                options=df_tourn['id'].tolist(),
-                format_func=lambda x: f"{x} - {df_tourn.loc[df_tourn['id']==x, 'name'].values[0]}" if (df_tourn['id']==x).any() else str(x)
-            )
+                st.info('Nenhum torneio encontrado. Use a aba **Sincronização Challonge** para importar da API.')
+            else:
+                selected_tid = st.selectbox(
+                    'Selecionar torneio pelo ID',
+                    options=df_tourn['id'].tolist(),
+                    format_func=lambda x: f"{x} - {df_tourn.loc[df_tourn['id']==x, 'name'].values[0]}" if (df_tourn['id']==x).any() else str(x)
+                )
 
-            selected_trows = df_tourn.loc[df_tourn['id'] == selected_tid]
-            if selected_trows.empty:
-                st.warning('Seleção inválida. Atualize a lista.')
-                return
-            
-            trow = selected_trows.iloc[0]
+                selected_trows = df_tourn.loc[df_tourn['id'] == selected_tid]
+                if selected_trows.empty:
+                    st.warning('Seleção inválida. Atualize a lista.')
+                else:
+                    trow = selected_trows.iloc[0]
 
-            def _parse_dt(val: str | None):
-                if pd.isna(val) or val in (None, ''):
-                    return None
-                try:
-                    return pd.to_datetime(val)
-                except Exception:
-                    return None
+                    def _parse_dt(val: str | None):
+                        if pd.isna(val) or val in (None, ''):
+                            return None
+                        try:
+                            return pd.to_datetime(val)
+                        except Exception:
+                            return None
 
-            started_dt = _parse_dt(trow['started_at'])
-            completed_dt = _parse_dt(trow['completed_at'])
+                    started_dt = _parse_dt(trow['started_at'])
+                    completed_dt = _parse_dt(trow['completed_at'])
 
-            with st.form('edit_tournament_form'):
-                name = st.text_input('name', trow['name'] or '')
-                category = st.text_input('category', trow['category'] or '')
-                state = st.selectbox('state', options=['pending', 'underway', 'complete', 'awaiting_review', 'group_stages_underway'], index=(['pending','underway','complete','awaiting_review','group_stages_underway'].index(trow['state']) if trow['state'] in ['pending','underway','complete','awaiting_review','group_stages_underway'] else 0))
-                started_at = st.text_input('started_at (YYYY-MM-DD HH:MM:SS ou vazio)', started_dt.strftime('%Y-%m-%d %H:%M:%S') if started_dt is not None else '')
-                completed_at = st.text_input('completed_at (YYYY-MM-DD HH:MM:SS ou vazio)', completed_dt.strftime('%Y-%m-%d %H:%M:%S') if completed_dt is not None else '')
-                description = st.text_area('description', trow['description'] or '')
-                submitted_t = st.form_submit_button('Salvar alterações')
+                    with st.form('edit_tournament_form'):
+                        name = st.text_input('name', trow['name'] or '')
+                        category = st.text_input('category', trow['category'] or '')
+                        state = st.selectbox('state', options=['pending', 'underway', 'complete', 'awaiting_review', 'group_stages_underway'], index=(['pending','underway','complete','awaiting_review','group_stages_underway'].index(trow['state']) if trow['state'] in ['pending','underway','complete','awaiting_review','group_stages_underway'] else 0))
+                        started_at = st.text_input('started_at (YYYY-MM-DD HH:MM:SS ou vazio)', started_dt.strftime('%Y-%m-%d %H:%M:%S') if started_dt is not None else '')
+                        completed_at = st.text_input('completed_at (YYYY-MM-DD HH:MM:SS ou vazio)', completed_dt.strftime('%Y-%m-%d %H:%M:%S') if completed_dt is not None else '')
+                        description = st.text_area('description', trow['description'] or '')
+                        submitted_t = st.form_submit_button('Salvar alterações')
 
-            if submitted_t:
-                try:
-                    started_val = None if started_at.strip() == '' else started_at.strip()
-                    completed_val = None if completed_at.strip() == '' else completed_at.strip()
-                    conn.execute(
-                        """
-                        UPDATE challonge_tournaments
-                        SET name = ?, category = ?, state = ?, started_at = ?, completed_at = ?, description = ?
-                        WHERE id = ?
-                        """,
-                        (name, category if category != '' else None, state, started_val, completed_val, description if description != '' else None, int(selected_tid))
-                    )
-                    conn.commit()
-                    st.success('Torneio atualizado com sucesso.')
-                except Exception as e:
-                    st.error(f'Erro ao atualizar torneio: {e}')
+                    if submitted_t:
+                        try:
+                            started_val = None if started_at.strip() == '' else started_at.strip()
+                            completed_val = None if completed_at.strip() == '' else completed_at.strip()
+                            conn.execute(
+                                """
+                                UPDATE challonge_tournaments
+                                SET name = ?, category = ?, state = ?, started_at = ?, completed_at = ?, description = ?
+                                WHERE id = ?
+                                """,
+                                (name, category if category != '' else None, state, started_val, completed_val, description if description != '' else None, int(selected_tid))
+                            )
+                            conn.commit()
+                            st.success('Torneio atualizado com sucesso.')
+                        except Exception as e:
+                            st.error(f'Erro ao atualizar torneio: {e}')
 
         # ----- Sincronização Challonge (Python) -----
         with tabs[2]:
@@ -320,34 +325,56 @@ def display_admin_page():
             if err_msg:
                 st.error(err_msg)
 
-            st.subheader("Sincronização com a API Challonge")
-            st.caption(
-                "Credenciais: CHALLONGE_USERNAME e CHALLONGE_API_KEY em st.secrets ou variáveis de ambiente."
+            st.subheader("Dados do Challonge")
+            st.markdown(
+                "Aqui o app **baixa** torneios, jogadores e partidas da sua conta Challonge "
+                "e grava no banco local. As chaves ficam em **Secrets** "
+                "(`CHALLONGE_USERNAME` e `CHALLONGE_API_KEY`)."
             )
             cu, ck = _get_challonge_credentials()
             if not cu or not ck:
                 st.error(
-                    "Configure CHALLONGE_USERNAME e CHALLONGE_API_KEY (secrets ou env) para sincronizar."
+                    "Configure `CHALLONGE_USERNAME` e `CHALLONGE_API_KEY` em `.streamlit/secrets.toml` "
+                    "ou nas variáveis de ambiente."
                 )
             else:
-                st.success("Credenciais Challonge detectadas.")
+                st.success("Conectado à API Challonge (credenciais OK).")
 
             log_box = st.empty()
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                btn_inc = st.button("Sincronizar (incremental)", key="sync_inc", disabled=not (cu and ck))
-            with col_b:
-                btn_force = st.button("Sincronizar tudo (force)", key="sync_force", disabled=not (cu and ck))
-            with col_c:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Uso do dia a dia** — importa só o que ainda não entrou (torneios novos).")
+                btn_inc = st.button(
+                    "Buscar dados novos",
+                    key="sync_inc",
+                    type="primary",
+                    disabled=not (cu and ck),
+                    help="Atualiza a lista de torneios na API e baixa participantes/partidas só dos torneios que ainda não foram sincronizados.",
+                )
+            with c2:
+                st.markdown("**Tudo de novo** — refaz a importação de **todos** os torneios (útil após mudanças grandes na API).")
+                btn_force = st.button(
+                    "Atualizar todos os torneios",
+                    key="sync_force",
+                    disabled=not (cu and ck),
+                    help="Baixa de novo participantes e partidas de cada torneio. Pode demorar mais que a opção ao lado.",
+                )
+
+            with st.expander("Opções avançadas — apagar banco local"):
+                st.markdown(
+                    "Apaga o arquivo **database.sqlite** deste projeto, recria as tabelas vazias "
+                    "e em seguida baixa tudo do Challonge. Use para **testar do zero** ou se o banco "
+                    "estiver corrompido; não desfaz alterações no site Challonge."
+                )
                 confirm_reset = st.checkbox(
-                    "Confirmo apagar o SQLite e recriar do zero",
+                    "Entendo que os dados locais serão apagados",
                     key="sync_reset_confirm",
                 )
                 btn_reset = st.button(
-                    "Reset DB + sync completo",
+                    "Apagar banco local e baixar tudo de novo",
                     key="sync_reset",
                     disabled=not (cu and ck) or not confirm_reset,
-                    type="primary",
+                    type="secondary",
                 )
 
             def _run_sync(force: bool, reset_db: bool) -> None:
@@ -387,6 +414,91 @@ def display_admin_page():
                 except Exception as e:
                     st.session_state["admin_sync_error"] = str(e)
                 st.rerun()
+
+        # ----- Mesclar participantes (manual) -----
+        with tabs[3]:
+            st.subheader("Mesclar jogadores duplicados")
+            st.markdown(
+                "Busque pelo **nome**, selecione **vários** registros e escolha qual fica como **principal**. "
+                "Os outros são removidos e as partidas passam a usar o mesmo participante — mesma lógica "
+                "do merge automático após o sync."
+            )
+            m_search = st.text_input(
+                "Buscar por nome (contém)",
+                key="merge_search",
+                placeholder="Ex.: Silva, João…",
+            )
+            m_limit = st.number_input(
+                "Máximo de linhas na busca",
+                min_value=20,
+                max_value=5000,
+                value=500,
+                step=50,
+                key="merge_limit",
+            )
+            q = (
+                "SELECT p.id, p.tournament_id, p.name, p.display_name, t.name AS tournament_name "
+                "FROM challonge_participants p "
+                "JOIN challonge_tournaments t ON t.id = p.tournament_id "
+                "ORDER BY p.id DESC LIMIT ?"
+            )
+            df_m = pd.read_sql_query(q, conn, params=(int(m_limit),))
+            if m_search.strip():
+                ms = m_search.strip()
+                mask_m = (
+                    df_m["name"].str.contains(ms, case=False, na=False)
+                    | df_m["display_name"].str.contains(ms, case=False, na=False)
+                    | df_m["tournament_name"].str.contains(ms, case=False, na=False)
+                )
+                df_m = df_m[mask_m]
+
+            if df_m.empty:
+                st.info("Nenhum participante encontrado. Ajuste a busca ou rode a sincronização.")
+            else:
+                st.caption(f"{len(df_m)} registro(s) na lista.")
+                opt_ids = df_m["id"].astype(int).tolist()
+
+                def _fmt_mid(pid: int) -> str:
+                    r = df_m.loc[df_m["id"] == pid].iloc[0]
+                    return (
+                        f"ID {pid} — {r['name']} "
+                        f"(torneio: {r['tournament_name'][:40]}{'…' if len(str(r['tournament_name'])) > 40 else ''})"
+                    )
+
+                picked = st.multiselect(
+                    "Selecione os participantes a mesclar (mínimo 2)",
+                    options=opt_ids,
+                    format_func=_fmt_mid,
+                    key="merge_multiselect",
+                )
+                if len(picked) >= 2:
+                    keep_id = st.selectbox(
+                        "Manter este como principal (nome e dados deste registro ficam)",
+                        options=picked,
+                        format_func=_fmt_mid,
+                        key="merge_keep",
+                    )
+                    remove_ids = [x for x in picked if x != keep_id]
+                    st.warning(
+                        f"Serão **removidos** {len(remove_ids)} registro(s); "
+                        f"as partidas passam a referenciar o ID **{keep_id}** (pode haver torneios diferentes)."
+                    )
+                    if st.button("Confirmar mesclagem", type="primary", key="merge_confirm"):
+                        try:
+                            from challonge_sync.merge import merge_manual_into
+
+                            n = merge_manual_into(
+                                conn,
+                                keep_id=int(keep_id),
+                                remove_ids=remove_ids,
+                            )
+                            st.success(
+                                f"Mesclagem concluída: {n} registro(s) fundido(s) no principal {keep_id}."
+                            )
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(str(e))
 
 # Carregar dados
 matches, players, tournaments = load_data()

@@ -7,7 +7,7 @@ import re
 import sqlite3
 import unicodedata
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 LogFn = Callable[[str], None]
 
@@ -120,6 +120,43 @@ def calculate_similarity(str1: str, str2: str) -> float:
     return similarity
 
 
+def repoint_matches_and_delete_participants(
+    conn: sqlite3.Connection,
+    main_id: int,
+    duplicate_ids: Iterable[int],
+) -> int:
+    """
+    Núcleo do merge (mesmo fluxo do sync automático): reponta FKs em challonge_matches
+    para `main_id` e remove cada participante em `duplicate_ids`.
+    Não faz commit.
+    """
+    main_id = int(main_id)
+    removed = 0
+    for raw in duplicate_ids:
+        pid = int(raw)
+        if pid == main_id:
+            continue
+        conn.execute(
+            "UPDATE challonge_matches SET player1_id = ? WHERE player1_id = ?",
+            (main_id, pid),
+        )
+        conn.execute(
+            "UPDATE challonge_matches SET player2_id = ? WHERE player2_id = ?",
+            (main_id, pid),
+        )
+        conn.execute(
+            "UPDATE challonge_matches SET winner_id = ? WHERE winner_id = ?",
+            (main_id, pid),
+        )
+        conn.execute(
+            "UPDATE challonge_matches SET loser_id = ? WHERE loser_id = ?",
+            (main_id, pid),
+        )
+        conn.execute("DELETE FROM challonge_participants WHERE id = ?", (pid,))
+        removed += 1
+    return removed
+
+
 def merge_participants(
     conn: sqlite3.Connection,
     *,
@@ -207,29 +244,45 @@ def merge_participants(
 
         main = group[0]
         main_id = int(main["id"])
-        for idx, participant in enumerate(group):
-            if idx == 0:
-                continue
-            pid = int(participant["id"])
-            conn.execute(
-                "UPDATE challonge_matches SET player1_id = ? WHERE player1_id = ?",
-                (main_id, pid),
-            )
-            conn.execute(
-                "UPDATE challonge_matches SET player2_id = ? WHERE player2_id = ?",
-                (main_id, pid),
-            )
-            conn.execute(
-                "UPDATE challonge_matches SET winner_id = ? WHERE winner_id = ?",
-                (main_id, pid),
-            )
-            conn.execute(
-                "UPDATE challonge_matches SET loser_id = ? WHERE loser_id = ?",
-                (main_id, pid),
-            )
-            conn.execute("DELETE FROM challonge_participants WHERE id = ?", (pid,))
-            merged += 1
+        dup_ids = [int(p["id"]) for p in group[1:]]
+        n = repoint_matches_and_delete_participants(conn, main_id, dup_ids)
+        merged += n
         log(f"Participantes mesclados com sucesso em: {main['name']}")
 
     conn.commit()
     log(f"\nProcesso concluído! {merged} participantes foram mesclados.")
+
+
+def merge_manual_into(
+    conn: sqlite3.Connection,
+    *,
+    keep_id: int,
+    remove_ids: list[int],
+) -> int:
+    """
+    Mescla participantes escolhidos manualmente: mantém `keep_id` e apaga os demais,
+    usando a mesma lógica de ``repoint_matches_and_delete_participants`` do sync.
+
+    Retorna quantos registros foram apagados.
+    """
+    keep_id = int(keep_id)
+    remove_ids = sorted({int(x) for x in remove_ids if int(x) != keep_id})
+    if not remove_ids:
+        raise ValueError(
+            "Selecione pelo menos dois participantes (um como principal e outro para fundir)."
+        )
+
+    all_ids = [keep_id] + remove_ids
+    placeholders = ",".join("?" * len(all_ids))
+    rows = list(
+        conn.execute(
+            f"SELECT id FROM challonge_participants WHERE id IN ({placeholders})",
+            all_ids,
+        )
+    )
+    if len(rows) != len(all_ids):
+        raise ValueError("Um ou mais IDs não existem na tabela de participantes.")
+
+    removed = repoint_matches_and_delete_participants(conn, keep_id, remove_ids)
+    conn.commit()
+    return removed
