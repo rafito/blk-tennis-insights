@@ -194,6 +194,7 @@ def display_admin_page():
                 "🏟️ Torneios",
                 "🔄 Sincronização Challonge",
                 "🔗 Mesclar jogadores",
+                "📥 Exportar Dados",
             ]
         )
 
@@ -499,6 +500,110 @@ def display_admin_page():
                             st.rerun()
                         except Exception as e:
                             st.error(str(e))
+
+        # ----- Exportar Dados -----
+        with tabs[4]:
+            st.subheader("Exportar todos os jogos")
+            st.caption(
+                "Tabela única com torneio, classe, jogadores, vencedor, perdedor, "
+                "placar (`scores_csv`, ex.: `2-0`) e demais campos disponíveis."
+            )
+
+            export_matches_sql = """
+                SELECT
+                  m.id                     AS match_id,
+                  m.challonge_id           AS match_challonge_id,
+                  t.id                     AS tournament_id,
+                  t.challonge_id           AS tournament_challonge_id,
+                  t.name                   AS tournament_name,
+                  t.category               AS tournament_category,
+                  t.tournament_type        AS tournament_type,
+                  t.state                  AS tournament_state,
+                  t.started_at             AS tournament_started_at,
+                  t.completed_at           AS tournament_completed_at,
+                  t.url                    AS tournament_url,
+                  m.round                  AS round,
+                  m.state                  AS match_state,
+                  m.started_at             AS match_started_at,
+                  m.completed_at           AS match_completed_at,
+                  m.score                  AS score,
+                  m.scores_csv             AS scores_csv,
+                  p1.id                    AS player1_id,
+                  p1.name                  AS player1_name,
+                  p1.display_name          AS player1_display_name,
+                  p1.email                 AS player1_email,
+                  p1.seed                  AS player1_seed,
+                  p2.id                    AS player2_id,
+                  p2.name                  AS player2_name,
+                  p2.display_name          AS player2_display_name,
+                  p2.email                 AS player2_email,
+                  p2.seed                  AS player2_seed,
+                  w.id                     AS winner_id,
+                  w.name                   AS winner_name,
+                  w.display_name           AS winner_display_name,
+                  l.id                     AS loser_id,
+                  l.name                   AS loser_name,
+                  l.display_name           AS loser_display_name
+                FROM challonge_matches m
+                JOIN challonge_tournaments t  ON t.id = m.tournament_id
+                LEFT JOIN challonge_participants p1 ON p1.id = m.player1_id
+                LEFT JOIN challonge_participants p2 ON p2.id = m.player2_id
+                LEFT JOIN challonge_participants w  ON w.id = m.winner_id
+                LEFT JOIN challonge_participants l  ON l.id = m.loser_id
+                ORDER BY t.started_at DESC, m.round, m.id
+            """
+
+            try:
+                df_export = pd.read_sql_query(export_matches_sql, conn)
+            except Exception as e:
+                st.error(f"Erro ao carregar dados para exportação: {e}")
+                df_export = pd.DataFrame()
+
+            if df_export.empty:
+                st.info("Nenhum jogo encontrado para exportar.")
+            else:
+                col_a, col_b = st.columns(2)
+                col_a.metric("Total de jogos", len(df_export))
+                col_b.metric(
+                    "Torneios distintos",
+                    int(df_export["tournament_id"].nunique()),
+                )
+
+                with st.expander("Pré-visualização (20 primeiras linhas)", expanded=False):
+                    st.dataframe(df_export.head(20), use_container_width=True)
+
+                ts = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+
+                xlsx_buf = io.BytesIO()
+                with pd.ExcelWriter(xlsx_buf, engine="openpyxl") as writer:
+                    df_export.to_excel(writer, index=False, sheet_name="jogos")
+                xlsx_bytes = xlsx_buf.getvalue()
+
+                json_bytes = df_export.to_json(
+                    orient="records",
+                    force_ascii=False,
+                    date_format="iso",
+                    indent=2,
+                ).encode("utf-8")
+
+                col_x, col_j = st.columns(2)
+                with col_x:
+                    st.download_button(
+                        "⬇️ Baixar Excel (.xlsx)",
+                        data=xlsx_bytes,
+                        file_name=f"blk_jogos_{ts}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",
+                        use_container_width=True,
+                    )
+                with col_j:
+                    st.download_button(
+                        "⬇️ Baixar JSON",
+                        data=json_bytes,
+                        file_name=f"blk_jogos_{ts}.json",
+                        mime="application/json",
+                        use_container_width=True,
+                    )
 
 # Carregar dados
 matches, players, tournaments = load_data()
