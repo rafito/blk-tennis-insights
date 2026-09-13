@@ -39,15 +39,26 @@ def get_query_params():
         'host': host
     }
 
+def _ensure_schema_migrated():
+    """Roda a migração de schema fora do cache do Streamlit.
+
+    Precisa executar em TODO rerun (não só quando load_data() é chamado
+    pela primeira vez), porque o resultado de load_data() fica cacheado
+    por @st.cache_data mesmo quando essa migração falha (ex.: lock
+    transitório do SQLite) — se ela estivesse dentro do corpo cacheado,
+    uma falha isolada travaria a migração para sempre nesse processo.
+    A função é idempotente e barata quando não há nada a migrar.
+    """
+    try:
+        from challonge_sync.db import init_schema_if_needed
+        init_schema_if_needed()
+    except Exception as e:
+        st.warning(f"Bootstrap do schema: {e}")
+
+
 @st.cache_data
 def load_data():
     with st.spinner('Carregando dados do banco...'):
-        try:
-            from challonge_sync.db import init_schema_if_needed
-            init_schema_if_needed()
-        except Exception as e:
-            st.warning(f"Bootstrap do schema: {e}")
-
         db_paths = []
         env_path = os.environ.get("BLK_SQLITE_PATH")
         if env_path:
@@ -203,63 +214,72 @@ def display_admin_page():
         # ----- Jogadores (challonge_participants) -----
         with tabs[0]:
             st.subheader('Editar Jogadores (participants)')
-            # Filtros
-            search = st.text_input('Buscar por nome/username/email', '')
-            limit = st.number_input('Limite', min_value=10, max_value=5000, value=200, step=10)
 
-            base_query = (
-                "SELECT id, tournament_id, name, display_name, username, email, seed, active, final_rank, player_id, disqualified "
-                "FROM challonge_participants"
-            )
-            df_players = pd.read_sql_query(base_query + " ORDER BY id DESC LIMIT ?", conn, params=(int(limit),))
-            if search:
-                mask = (
-                    df_players['name'].str.contains(search, case=False, na=False) |
-                    df_players['display_name'].str.contains(search, case=False, na=False) |
-                    df_players['username'].str.contains(search, case=False, na=False) |
-                    df_players['email'].str.contains(search, case=False, na=False)
-                )
-                df_players = df_players[mask]
-
-            st.dataframe(df_players, use_container_width=True)
-
-            if df_players.empty:
-                st.info('Nenhum jogador encontrado com os filtros atuais.')
+            # Defesa em profundidade: se a migração do schema ainda não rodou
+            # (ou falhou), a coluna 'disqualified' pode não existir ainda em
+            # challonge_participants. Evita quebrar a aba inteira com
+            # DatabaseError — mostra aviso e não monta a query/form/UPDATE.
+            participant_cols = [row[1] for row in conn.execute("PRAGMA table_info(challonge_participants)")]
+            if "disqualified" not in participant_cols:
+                st.warning("Migração do banco ainda em andamento — recarregue a página em alguns segundos.")
             else:
-                # Seleção e edição
-                selected_id = st.selectbox(
-                    'Selecionar jogador pelo ID',
-                    options=df_players['id'].tolist(),
-                    format_func=lambda x: f"{x} - {df_players.loc[df_players['id']==x, 'name'].values[0]}" if (df_players['id']==x).any() else str(x)
+                # Filtros
+                search = st.text_input('Buscar por nome/username/email', '')
+                limit = st.number_input('Limite', min_value=10, max_value=5000, value=200, step=10)
+
+                base_query = (
+                    "SELECT id, tournament_id, name, display_name, username, email, seed, active, final_rank, player_id, disqualified "
+                    "FROM challonge_participants"
                 )
+                df_players = pd.read_sql_query(base_query + " ORDER BY id DESC LIMIT ?", conn, params=(int(limit),))
+                if search:
+                    mask = (
+                        df_players['name'].str.contains(search, case=False, na=False) |
+                        df_players['display_name'].str.contains(search, case=False, na=False) |
+                        df_players['username'].str.contains(search, case=False, na=False) |
+                        df_players['email'].str.contains(search, case=False, na=False)
+                    )
+                    df_players = df_players[mask]
 
-                selected_rows = df_players.loc[df_players['id'] == selected_id]
-                if selected_rows.empty:
-                    st.warning('Seleção inválida. Atualize a lista ou ajuste os filtros.')
+                st.dataframe(df_players, use_container_width=True)
+
+                if df_players.empty:
+                    st.info('Nenhum jogador encontrado com os filtros atuais.')
                 else:
-                    row = selected_rows.iloc[0]
-                    with st.form('edit_player_form'):
-                        name = st.text_input('name', row['name'] or '')
-                        display_name = st.text_input('display_name', row['display_name'] or '')
-                        email = st.text_input('email', row['email'] or '')
-                        disqualified = st.checkbox('Desqualificado do ranking', value=bool(row['disqualified']))
-                        submitted = st.form_submit_button('Salvar alterações')
+                    # Seleção e edição
+                    selected_id = st.selectbox(
+                        'Selecionar jogador pelo ID',
+                        options=df_players['id'].tolist(),
+                        format_func=lambda x: f"{x} - {df_players.loc[df_players['id']==x, 'name'].values[0]}" if (df_players['id']==x).any() else str(x)
+                    )
 
-                    if submitted:
-                        try:
-                            conn.execute(
-                                """
-                                UPDATE challonge_participants
-                                SET name = ?, display_name = ?, email = ?, disqualified = ?
-                                WHERE id = ?
-                                """,
-                                (name, display_name, email, int(disqualified), int(selected_id))
-                            )
-                            conn.commit()
-                            st.cache_data.clear()
-                            st.success('Jogador atualizado com sucesso.')
-                        except Exception as e:
-                            st.error(f'Erro ao atualizar jogador: {e}')
+                    selected_rows = df_players.loc[df_players['id'] == selected_id]
+                    if selected_rows.empty:
+                        st.warning('Seleção inválida. Atualize a lista ou ajuste os filtros.')
+                    else:
+                        row = selected_rows.iloc[0]
+                        with st.form('edit_player_form'):
+                            name = st.text_input('name', row['name'] or '')
+                            display_name = st.text_input('display_name', row['display_name'] or '')
+                            email = st.text_input('email', row['email'] or '')
+                            disqualified = st.checkbox('Desqualificado do ranking', value=bool(row['disqualified']))
+                            submitted = st.form_submit_button('Salvar alterações')
+
+                        if submitted:
+                            try:
+                                conn.execute(
+                                    """
+                                    UPDATE challonge_participants
+                                    SET name = ?, display_name = ?, email = ?, disqualified = ?
+                                    WHERE id = ?
+                                    """,
+                                    (name, display_name, email, int(disqualified), int(selected_id))
+                                )
+                                conn.commit()
+                                st.cache_data.clear()
+                                st.success('Jogador atualizado com sucesso.')
+                            except Exception as e:
+                                st.error(f'Erro ao atualizar jogador: {e}')
 
         # ----- Torneios (challonge_tournaments) -----
         with tabs[1]:
@@ -638,6 +658,9 @@ def display_admin_page():
                     st.error(f"Erro ao ler o arquivo do banco: {e}")
             else:
                 st.warning("Não foi possível localizar o arquivo do banco para backup.")
+
+# Garantir schema migrado (fora do cache — roda em todo rerun)
+_ensure_schema_migrated()
 
 # Carregar dados
 matches, players, tournaments = load_data()
