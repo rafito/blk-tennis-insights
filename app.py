@@ -76,6 +76,8 @@ def load_data():
         try:
             matches = pd.read_sql_query("SELECT * FROM matches", conn)
             players = pd.read_sql_query("SELECT * FROM players", conn)
+            if 'disqualified' not in players.columns:
+                players['disqualified'] = 0
             tournaments = pd.read_sql_query("SELECT * FROM tournaments", conn)
         except Exception as e:
             conn.close()
@@ -254,6 +256,7 @@ def display_admin_page():
                                 (name, display_name, email, int(disqualified), int(selected_id))
                             )
                             conn.commit()
+                            st.cache_data.clear()
                             st.success('Jogador atualizado com sucesso.')
                         except Exception as e:
                             st.error(f'Erro ao atualizar jogador: {e}')
