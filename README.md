@@ -64,6 +64,12 @@ python3 -m challonge_sync --reset-db --force
 
 Na página **Admin**, aba **Sincronização Challonge**, use os botões incremental, force ou reset (este último exige confirmação).
 
+### ⚠️ Persistência de dados em produção
+
+O Streamlit Community Cloud reconstrói o container a cada redeploy (push de código): qualquer arquivo versionado no git — incluindo `database.sqlite` — volta pro estado do último commit. O app grava dados reais só no `database.sqlite` local do container, então qualquer ação de admin feita em produção (sync do Challonge, merge de jogadores, edição de nome/email, desclassificar do ranking) é **perdida no próximo deploy de código** se o arquivo atualizado não for commitado de volta antes.
+
+**Ritual:** depois de qualquer ação de admin em produção, na aba **📥 Exportar Dados**, use o botão **⬇️ Baixar database.sqlite** para baixar o banco atual, substitua o `database.sqlite` deste repo pelo arquivo baixado, e commit + push ANTES do próximo push de código que for disparar um redeploy.
+
 ### Schema do banco
 
 O arquivo [`schema.sql`](schema.sql) define tabelas `challonge_*` e as views `matches`, `players`, `tournaments`. Na primeira execução, se o banco estiver ausente, o app tenta aplicar esse schema automaticamente.

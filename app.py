@@ -609,6 +609,36 @@ def display_admin_page():
                         use_container_width=True,
                     )
 
+            st.divider()
+            st.subheader("💾 Backup do banco de dados")
+            st.caption(
+                "O Streamlit Community Cloud tem filesystem efêmero: qualquer redeploy "
+                "(push de código) reseta o database.sqlite pro que estiver commitado no "
+                "git. Depois de qualquer ação de admin em produção (sync, merge, editar "
+                "jogador, desclassificar), baixe o backup abaixo e commite/dê push do "
+                "arquivo atualizado ANTES do próximo deploy de código — senão a próxima "
+                "vez que alguém subir uma mudança de código, essa edição é perdida."
+            )
+
+            db_path = st.session_state.get("db_path")
+            if db_path and os.path.isfile(db_path):
+                try:
+                    conn.commit()  # garante que não há transação pendente antes de ler o arquivo
+                    with open(db_path, "rb") as f:
+                        db_bytes = f.read()
+                    ts_backup = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+                    st.download_button(
+                        "⬇️ Baixar database.sqlite",
+                        data=db_bytes,
+                        file_name=f"database_{ts_backup}.sqlite",
+                        mime="application/x-sqlite3",
+                        use_container_width=True,
+                    )
+                except Exception as e:
+                    st.error(f"Erro ao ler o arquivo do banco: {e}")
+            else:
+                st.warning("Não foi possível localizar o arquivo do banco para backup.")
+
 # Carregar dados
 matches, players, tournaments = load_data()
 
