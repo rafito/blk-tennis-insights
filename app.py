@@ -76,6 +76,8 @@ def load_data():
         try:
             matches = pd.read_sql_query("SELECT * FROM matches", conn)
             players = pd.read_sql_query("SELECT * FROM players", conn)
+            if 'disqualified' not in players.columns:
+                players['disqualified'] = 0
             tournaments = pd.read_sql_query("SELECT * FROM tournaments", conn)
         except Exception as e:
             conn.close()
@@ -206,7 +208,7 @@ def display_admin_page():
             limit = st.number_input('Limite', min_value=10, max_value=5000, value=200, step=10)
 
             base_query = (
-                "SELECT id, tournament_id, name, display_name, username, email, seed, active, final_rank, player_id "
+                "SELECT id, tournament_id, name, display_name, username, email, seed, active, final_rank, player_id, disqualified "
                 "FROM challonge_participants"
             )
             df_players = pd.read_sql_query(base_query + " ORDER BY id DESC LIMIT ?", conn, params=(int(limit),))
@@ -240,6 +242,7 @@ def display_admin_page():
                         name = st.text_input('name', row['name'] or '')
                         display_name = st.text_input('display_name', row['display_name'] or '')
                         email = st.text_input('email', row['email'] or '')
+                        disqualified = st.checkbox('Desqualificado do ranking', value=bool(row['disqualified']))
                         submitted = st.form_submit_button('Salvar alterações')
 
                     if submitted:
@@ -247,12 +250,13 @@ def display_admin_page():
                             conn.execute(
                                 """
                                 UPDATE challonge_participants
-                                SET name = ?, display_name = ?, email = ?
+                                SET name = ?, display_name = ?, email = ?, disqualified = ?
                                 WHERE id = ?
                                 """,
-                                (name, display_name, email, int(selected_id))
+                                (name, display_name, email, int(disqualified), int(selected_id))
                             )
                             conn.commit()
+                            st.cache_data.clear()
                             st.success('Jogador atualizado com sucesso.')
                         except Exception as e:
                             st.error(f'Erro ao atualizar jogador: {e}')
