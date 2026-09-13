@@ -28,20 +28,47 @@ def connect() -> sqlite3.Connection:
 def init_schema_if_needed() -> bool:
     """Aplica schema.sql se o banco estiver vazio ou sem tabelas core. Retorna True se aplicou."""
     path = get_db_path()
+    applied = False
     if not path.exists():
         _apply_schema(path)
-        return True
+        applied = True
+    else:
+        conn = sqlite3.connect(str(path), timeout=30.0)
+        try:
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='challonge_tournaments'"
+            )
+            exists = cur.fetchone() is not None
+        finally:
+            conn.close()
+        if not exists:
+            _apply_schema(path)
+            applied = True
+
     conn = sqlite3.connect(str(path), timeout=30.0)
     try:
-        cur = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='challonge_tournaments'"
-        )
-        if cur.fetchone():
-            return False
+        _ensure_disqualified_column(conn)
     finally:
         conn.close()
-    _apply_schema(path)
-    return True
+    return applied
+
+
+def _ensure_disqualified_column(conn: sqlite3.Connection) -> None:
+    """Garante que challonge_participants tem a coluna disqualified e que a view players a expõe.
+
+    Idempotente: roda em todo init_schema_if_needed(), inclusive contra bancos
+    já existentes que nunca reaplicam schema.sql sozinhos.
+    """
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(challonge_participants)")]
+    if "disqualified" not in cols:
+        conn.execute(
+            "ALTER TABLE challonge_participants ADD COLUMN disqualified INTEGER NOT NULL DEFAULT 0"
+        )
+    conn.execute("DROP VIEW IF EXISTS players")
+    conn.execute(
+        "CREATE VIEW players AS SELECT id, name, disqualified FROM challonge_participants"
+    )
+    conn.commit()
 
 
 def _apply_schema(path: Path) -> None:

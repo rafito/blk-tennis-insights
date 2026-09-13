@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS challonge_participants (
     checked_in_at DATETIME NULL,
     active INTEGER NOT NULL DEFAULT 1,
     final_rank INTEGER NULL,
+    disqualified INTEGER NOT NULL DEFAULT 0,
     raw_data TEXT NULL,
     synced INTEGER NOT NULL DEFAULT 0,
     last_sync_at DATETIME NULL,
@@ -116,7 +117,7 @@ JOIN challonge_participants l ON l.id = m.loser_id;
 
 DROP VIEW IF EXISTS players;
 CREATE VIEW players AS
-SELECT id, name FROM challonge_participants;
+SELECT id, name, disqualified FROM challonge_participants;
 
 DROP VIEW IF EXISTS tournaments;
 CREATE VIEW tournaments AS
