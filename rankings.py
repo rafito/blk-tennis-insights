@@ -86,6 +86,22 @@ def calculate_glicko_ratings(matches, players, tournaments, category=None, time_
     
     return ratings_df
 
+
+# Pontuação por etapa. FINALS tem tabela própria (menor que a dos torneios regulares).
+POINTS_REGULAR = {'champion': 2000, 'vice': 1200, 'semi': 720, 'quarters': 360, 'first': 180}
+POINTS_FINALS = {'champion': 1000, 'vice': 600, 'semi': 360, 'quarters': 180}
+
+
+def is_finals_name(tournament_name):
+    return 'FINALS' in str(tournament_name).upper()
+
+
+def stage_points(tournament_name, stage):
+    """Pontos de uma etapa ('champion', 'vice', 'semi', 'quarters', 'first')."""
+    table = POINTS_FINALS if is_finals_name(tournament_name) else POINTS_REGULAR
+    return table.get(stage, 0)
+
+
 @st.cache_data
 def calculate_points_ranking(matches, players, tournaments, category=None, time_period=None):
     """Calcula ranking baseado em pontos por vitória e saldo de sets"""
@@ -104,30 +120,11 @@ def calculate_points_ranking(matches, players, tournaments, category=None, time_
     def get_points_for_round(row, is_champion=False):
         if pd.isna(row['round']) or pd.isna(row['tournament_name']):
             return 0
-            
-        is_finals = 'FINALS' in str(row['tournament_name']).upper()
-        
-        # Nova estrutura de pontos baseada nos Grand Slams
-        if is_finals:
-            # Torneios FINALS - estrutura adaptada
-            if row['round'] == 3:  # Final
-                return 2000 if is_champion else 1200  # Campeão vs Vice-campeão
-            elif row['round'] == 2:  # Semifinal
-                return 720
-            elif row['round'] == 1:  # Quartas
-                return 360
-        else:
-            # Torneios regulares - estrutura adaptada
-            if row['round'] == 4:  # Final
-                return 2000 if is_champion else 1200  # Campeão vs Vice-campeão
-            elif row['round'] == 3:  # Semifinal
-                return 720
-            elif row['round'] == 2:  # Quartas
-                return 360
-            elif row['round'] == 1:  # Oitavas/Primeira rodada
-                return 180
-        
-        return 0
+        name = row['tournament_name']
+        final_round = 3 if is_finals_name(name) else 4
+        stages = {final_round: 'champion' if is_champion else 'vice',
+                  final_round - 1: 'semi', final_round - 2: 'quarters', final_round - 3: 'first'}
+        return stage_points(name, stages.get(row['round']))
     
     # Calcular pontos dos vencedores considerando se são campeões
     points_list = []
@@ -158,21 +155,17 @@ def calculate_points_ranking(matches, players, tournaments, category=None, time_
         tournament_matches = filtered_matches[filtered_matches['tournament_id'] == tournament_id]
         max_round = tournament_matches['round'].max()
         
+        name = row['tournament_name']
         if round_num == max_round:
-            # Vice-campeão (perdedor da final)
-            is_finals = 'FINALS' in str(row['tournament_name']).upper()
-            points = 1200  # Vice-campeão recebe 1200 pontos
+            points = stage_points(name, 'vice')
+        elif round_num == max_round - 1:
+            points = stage_points(name, 'semi')
+        elif round_num == max_round - 2:
+            points = stage_points(name, 'quarters')
         elif round_num == 1:
-            # Perdedor na primeira rodada recebe pontos de participação
-            points = 180
+            points = stage_points(name, 'first')
         else:
-            # Outros perdedores recebem pontos baseados na rodada que perderam
-            if round_num == max_round - 1:  # Perdedor na semifinal
-                points = 720
-            elif round_num == max_round - 2:  # Perdedor nas quartas
-                points = 360
-            else:
-                points = 0
+            points = 0
         
         if points > 0:
             losers_points_list.append({
@@ -248,27 +241,11 @@ def get_player_points_breakdown(player_id, matches, players, tournaments, catego
     def get_points_for_round(row, is_champion=False):
         if pd.isna(row['round']) or pd.isna(row['tournament_name']):
             return 0
-            
-        is_finals = 'FINALS' in str(row['tournament_name']).upper()
-        
-        if is_finals:
-            if row['round'] == 3:  # Final
-                return 2000 if is_champion else 1200
-            elif row['round'] == 2:  # Semifinal
-                return 720
-            elif row['round'] == 1:  # Quartas
-                return 360
-        else:
-            if row['round'] == 4:  # Final
-                return 2000 if is_champion else 1200
-            elif row['round'] == 3:  # Semifinal
-                return 720
-            elif row['round'] == 2:  # Quartas
-                return 360
-            elif row['round'] == 1:  # Oitavas/Primeira rodada
-                return 180
-        
-        return 0
+        name = row['tournament_name']
+        final_round = 3 if is_finals_name(name) else 4
+        stages = {final_round: 'champion' if is_champion else 'vice',
+                  final_round - 1: 'semi', final_round - 2: 'quarters', final_round - 3: 'first'}
+        return stage_points(name, stages.get(row['round']))
     
     def get_stage_label(round_num, tournament_name):
         """Retorna o nome da etapa (sem preposição) para compor frases de derrota."""
@@ -324,7 +301,7 @@ def get_player_points_breakdown(player_id, matches, players, tournaments, catego
                 max_round_lost = int(losses['round'].max())
                 # Caso 2: Perdeu na Final (vice)
                 if max_round_lost == int(tournament_max_round):
-                    points = 1200
+                    points = stage_points(tournament_info['name'], 'vice')
                     max_points = points
                     best_performance = {
                         'tournament': tournament_info['name'],
@@ -334,12 +311,13 @@ def get_player_points_breakdown(player_id, matches, players, tournaments, catego
                     }
                 else:
                     # Determinar pontos baseados na rodada em que perdeu
+                    t_name = tournament_info['name']
                     if max_round_lost == tournament_max_round - 1:  # Perdeu na semifinal
-                        points = 720
+                        points = stage_points(t_name, 'semi')
                     elif max_round_lost == tournament_max_round - 2:  # Perdeu nas quartas
-                        points = 360
+                        points = stage_points(t_name, 'quarters')
                     elif max_round_lost == 1:  # Perdeu na primeira rodada
-                        points = 180
+                        points = stage_points(t_name, 'first')
                     else:
                         points = 0
                     
@@ -666,11 +644,11 @@ def display_rankings_page(matches, players, tournaments):
             - **Perdedor nas quartas de final:** 360 pontos
             - **Perdedor na primeira rodada:** 180 pontos
             
-            **Torneios FINALS:**
-            - Seguem a mesma estrutura, mas com menos rodadas
-            - Final: Campeão (2.000) vs Vice-campeão (1.200)
-            - Semifinal: 720 pontos (perdedor)
-            - Quartas: 360 pontos (perdedor)
+            **Torneios FINALS (pontuação própria, menos rodadas):**
+            - Campeão: 1.000 pontos
+            - Vice-campeão: 600 pontos
+            - Perdedor na semifinal: 360 pontos
+            - Perdedor nas quartas de final: 180 pontos
             
             **Critérios de desempate:** Saldo de Sets
             """)
